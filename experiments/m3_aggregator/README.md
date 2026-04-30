@@ -1,15 +1,21 @@
-# M3 — Aggregator 模块工作目录
+# M3 — Aggregator 模块
 
-> Jon 的工作区。最终代码会被推到 fork 出来的 `PriceOracle-AVS` repo 的 `aggregator/` 目录下。
+Jon 负责的 M3 工作区：把 EigenLayer Incredible Squaring AVS 的
+`aggregator/` 改造成价格预言机的中位数聚合器，并完成论文
+Section V（BLS Signature and Median Consensus）。
 
 ## 文件清单
 
 | 文件 | 说明 | 状态 |
 |------|------|------|
-| `median.go` | 中位数 / 方差 / outlier 检测的纯算法实现 | ✅ skeleton 已写 |
-| `median_test.go` | 对应的单元测试，10 个 test case | ✅ skeleton 已写 |
-| `aggregator_modifications.md` | aggregator.go 4 处改动的 diff | 等环境搭好后再写 |
-| `section_V_skeleton.md` | 论文 §V 章节的英文骨架 | 等实验数据出来后再写 |
+| `go.mod` | 离线测试用 Go module | 已完成 |
+| `median.go` | 中位数 / 方差 / outlier 检测的纯算法实现 | 已完成 |
+| `median_test.go` | 10 个单元测试 + 2 个 benchmark | 已完成 |
+| `verify_median.py` | Python 版校验脚本，不依赖本机 Go 环境 | 已完成 |
+| `simulate_avs.py` | Monte-Carlo 实验和画图脚本 | 已完成 |
+| `aggregator_modifications.md` | `aggregator.go` 4 处改动说明 | 已完成 |
+| `section_V_skeleton.md` | 论文 Section V 英文骨架 | 已完成 |
+| `figs/` | 鲁棒性、tolerance、latency 的图和 CSV | 已完成 |
 
 ## 离线测 median.go（不需要装 EigenLayer 工具链）
 
@@ -17,11 +23,20 @@
 
 ```bash
 cd experiments/m3_aggregator
-go mod init m3_test
 go test -v
+go test -bench=. -benchmem
 ```
 
-期望输出：所有 10 个 test PASS。
+期望输出：所有 10 个 unit tests PASS，并打印 median / outlier 检测的
+benchmark 结果。
+
+如果本机还没有 Go，可以先跑 Python 校验脚本：
+
+```bash
+python verify_median.py
+```
+
+当前校验结果：10 / 10 passed。
 
 ## 等 fork 好之后
 
@@ -42,4 +57,13 @@ go test -bench=. -benchmem -count=5 ./aggregator/...
 
 ## 代码改动思路（对应 M3_GUIDE.md 的 Step 3）
 
-参见根目录 `M3_GUIDE.md` 第 3 节。等你把环境搭好、看完原版 aggregator.go，告诉我，我把这 4 处的具体 diff 写在 `aggregator_modifications.md` 里。
+现在根目录的临时 guide 已经移除；具体改造步骤保留在
+`aggregator_modifications.md`。真正集成时需要先拿到 fork 后的
+`PriceOracle-AVS/aggregator/aggregator.go` 和 M1 生成的新 ABI binding，
+然后按该文档完成：
+
+1. task 字段从 squaring number 换成 price task 的 `AssetPair`。
+2. task generator 从 `sendNewTaskNumberToSquare` 改成 `sendNewPriceTask`。
+3. `ProcessSignedTaskResponse` 记录每个 operator 的 `ReportedPrice`。
+4. `sendAggregatedResponseToContract` 调用 `Median`、`Variance`、
+   `DetectOutliers`，把 median 和 variance 上链。

@@ -120,3 +120,36 @@ func sliceEqual(a, b []int) bool {
 	}
 	return true
 }
+
+func BenchmarkMedianSevenOperators(b *testing.B) {
+	prices := []*big.Int{
+		bi(3500_000000),
+		bi(3502_000000),
+		bi(3498_000000),
+		bi(3501_000000),
+		bi(3499_000000),
+		bi(3504_000000),
+		bi(3300_000000),
+	}
+
+	for i := 0; i < b.N; i++ {
+		_ = Median(prices)
+	}
+}
+
+func BenchmarkDetectOutliersSevenOperators(b *testing.B) {
+	median := bi(3500_000000)
+	prices := []*big.Int{
+		bi(3500_000000),
+		bi(3502_000000),
+		bi(3498_000000),
+		bi(3700_000000),
+		bi(3499_000000),
+		bi(3504_000000),
+		bi(3300_000000),
+	}
+
+	for i := 0; i < b.N; i++ {
+		_ = DetectOutliers(prices, median, 5)
+	}
+}
