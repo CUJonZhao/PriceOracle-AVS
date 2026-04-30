@@ -1,0 +1,95 @@
+\section{Smart Contract Design}
+\label{sec:contracts}
+
+\subsection{Architecture}
+
+PriceOracle-AVS reuses the two-contract pattern of the Incredible
+Squaring template~\cite{layrlabs_isavs}: a
+\texttt{PriceOracleServiceManager}, which registers the AVS with the
+EigenLayer core contracts and gates operator opt-in, and a
+\texttt{PriceOracleTaskManager}, which schedules price-quote tasks
+and verifies the BLS-aggregated responses returned by the
+Aggregator.  The split keeps the EigenLayer-facing administrative
+surface in a small, audit-friendly contract while the
+application-specific task logic lives in a separate, easily upgradeable
+contract.  Operators register once with the ServiceManager, after
+which the TaskManager drives the per-task lifecycle:
+\texttt{NewTaskCreated} $\rightarrow$ off-chain quote retrieval and
+BLS signing $\rightarrow$ \texttt{respondToTask} $\rightarrow$
+optional \texttt{raiseAndResolveDeviationChallenge}.
+
+\subsection{Modified Task and TaskResponse Structs}
+
+The principal change relative to the template is the redefinition of
+the \texttt{Task} and \texttt{TaskResponse} structs (Listing~\ref{lst:taskstruct}).
+The template's \texttt{numberToBeSquared} field becomes an
+\texttt{assetPair} string identifying the feed (\texttt{"ETH/USD"} or
+\texttt{"BTC/USD"} in our deployment).  The response now carries the
+median price and its observed dispersion rather than a single
+squared integer.  Both fields use the 6-decimal fixed-point
+convention common to USD pairs in the Chainlink and Pyth
+ecosystems~\cite{breidenbach2021chainlink, pyth2023}.
+
+\begin{lstlisting}[language=Solidity, caption={Task and TaskResponse structs.}, label={lst:taskstruct}]
+struct Task {
+    string   assetPair;       // e.g. "ETH/USD"
+    uint32   taskCreatedBlock;
+    bytes    quorumNumbers;
+    uint32   quorumThresholdPercentage;
+}
+
+struct TaskResponse {
+    uint32   referenceTaskIndex;
+    uint256  priceMedian;     // 6-decimal fixed
+    uint256  priceVariance;
+}
+\end{lstlisting}
+
+\subsection{Deviation Slashing Rule}
+
+The most consequential addition is the deviation slashing function.
+For each task index $T$, after the Aggregator submits the consensus
+\texttt{priceMedian} $m$, an external Challenger may invoke
+\texttt{raiseAndResolveDeviationChallenge}$(T, o_i, p_i)$ to assert
+that operator $o_i$ reported a price $p_i$ outside the tolerance band:
+\begin{equation}
+\text{slash}(o_i) \;\iff\; \frac{|p_i - m|}{m} \;>\; \tau,
+\label{eq:slash}
+\end{equation}
+where $\tau$ is a deployment-time constant fixed at $5\%$
+(see Section~\ref{sec:agg-tolerance} for the empirical motivation).
+If the inequality holds, the contract calls into the EigenLayer
+\texttt{Slasher} to forfeit a configurable fraction of $o_i$'s
+restaked balance.  If it does not, the challenger pays a
+predetermined bond to disincentivise nuisance challenges, mirroring
+the optimistic-oracle pattern of UMA~\cite{uma2020}.  The full
+contract source is available in our open-source
+fork.\footnote{\url{https://github.com/<TODO M1: paste fork URL>}}
+
+\subsection{Foundry Test Coverage}
+
+We exercise the contracts with a Foundry test
+suite~\cite{foundry} of $\geq 10$ unit tests, covering at minimum:
+(i) \texttt{NewTaskCreated} event emission for valid asset pairs,
+(ii) rejection of below-quorum responses,
+(iii) successful BLS aggregate verification,
+(iv) slashing triggered when $|p_i - m| / m > \tau$,
+(v) slashing rejected (and challenger bond forfeited) when
+$|p_i - m| / m \leq \tau$,
+and (vi) replay protection against duplicate \texttt{respondToTask}
+calls.  Total branch coverage on the modified contracts is
+\textit{TBD\% [M1: fill via \texttt{forge coverage}]}; gas
+consumption per task lifecycle is \textit{TBD gas [M1: fill via
+\texttt{forge test --gas-report}]}.
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=0.95\columnwidth]{figures/fig_contracts.pdf}
+  \framebox[0.95\columnwidth][c]{\raisebox{1.2cm}{\textit{[placeholder: contract architecture --- M1 to draw]}}}
+  \caption{PriceOracle-AVS smart-contract architecture.  Operators
+           opt in via the ServiceManager; the TaskManager emits price
+           tasks, verifies the aggregator's BLS-signed median
+           response, and routes outlier challenges to the EigenLayer
+           Slasher.}
+  \label{fig:contracts}
+\end{figure}

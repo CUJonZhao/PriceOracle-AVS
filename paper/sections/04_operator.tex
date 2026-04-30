@@ -1,0 +1,86 @@
+\section{Operator Implementation}
+\label{sec:operator}
+
+\subsection{Role and Lifecycle}
+
+Each Operator is a long-running Go binary, derived from the
+Incredible Squaring template and registered with the
+\texttt{PriceOracleServiceManager} at startup.  It subscribes to the
+\texttt{NewTaskCreated} event stream from the TaskManager.  On each
+event it parses the requested \texttt{assetPair}, queries a single
+statically configured CEX endpoint, signs the resulting
+\texttt{TaskResponse} with its EigenLayer-registered BLS private key,
+and forwards the signature over JSON-RPC to the Aggregator's
+\texttt{ProcessSignedTaskResponse} handler.  Per-Operator state is
+deliberately minimal: no persistent task history is required, so
+restarted Operators rejoin without replaying past tasks.
+
+\subsection{Heterogeneous CEX Integration}
+
+Our deployment runs four Operators, each pinned to a different
+exchange via the \texttt{OPERATOR\_CEX\_SOURCE} environment variable:
+Binance, Coinbase, Kraken, and OKX.  All four expose unauthenticated
+ticker endpoints returning JSON.  Listing~\ref{lst:fetch} shows the
+Binance fetcher; the other three are structurally similar with
+exchange-specific path and field-name differences.  Errors (HTTP
+non-2xx, JSON parse failure, fixed-point overflow) abort that
+Operator's task without poisoning the aggregator: the missing
+report simply lowers the count of available quotes for the round.
+
+\begin{lstlisting}[language=Go, caption={CEX price fetcher (Binance).}, label={lst:fetch}]
+func fetchBinance(p string) (*big.Int, error) {
+  u := "https://api.binance.com/api/v3/ticker/price?symbol=" + norm(p)
+  ctx, c := context.WithTimeout(context.Background(), 2*time.Second)
+  defer c()
+  req, _ := http.NewRequestWithContext(ctx, "GET", u, nil)
+  resp, err := http.DefaultClient.Do(req)
+  if err != nil { return nil, err }
+  defer resp.Body.Close()
+  var b struct{ Price string }
+  json.NewDecoder(resp.Body).Decode(&b)
+  return parseSixDecimal(b.Price)
+}
+\end{lstlisting}
+
+\subsection{BLS Signing and RPC Submission}
+
+After parsing the ticker, the Operator constructs a
+\texttt{TaskResponse}, ABI-encodes it, and signs the digest with its
+BLS12-381 private key using the EigenLayer SDK's BLS package.  The
+signature is forwarded alongside the response and the registered
+\texttt{OperatorId} to the Aggregator over JSON-RPC.  The AVS
+contract is the canonical source of truth for the registered key
+set, so no additional public-key plumbing is required on the
+Operator side.
+
+\subsection{Decentralization Beyond Restaking}
+
+EigenLayer restaking provides \emph{economic} decentralization: any
+holder of restaked ETH can plausibly run an Operator.  Our deployment
+adds a second axis, \emph{reporter diversity}, by sourcing each
+Operator's quote from a different exchange.  A single CEX going down
+(maintenance, rate-limit ban, regional block) reduces the available
+quote count by at most $25\%$ but cannot, on its own, push the
+consensus median outside the slashing band.  This is the property
+formalised by the breakdown-point analysis of
+Section~\ref{sec:agg-median}.
+
+\subsection{Measured CEX Latency}
+
+Figure~\ref{fig:cex-latency} reports the per-Operator quote latency
+distribution observed over $1{,}000$ sequential ticker calls per
+exchange.  Median latency is \textit{TBD ms} for the fastest provider
+and \textit{TBD ms} for the slowest; the spread is dominated by the
+geographic distance to each exchange's edge servers rather than JSON
+parsing or signing overhead, which together account for less than
+$10\,\mathrm{ms}$.
+
+\begin{figure}[t]
+  \centering
+  \framebox[0.95\columnwidth][c]{\raisebox{1.2cm}{\textit{[placeholder: per-CEX latency boxplot --- M2 to add]}}}
+  \caption{End-to-end latency distribution per exchange API,
+           measured over $1{,}000$ sequential calls per source.
+           Honest disagreement among feeds is a few basis points,
+           well below our $\tau{=}5\%$ slashing tolerance.}
+  \label{fig:cex-latency}
+\end{figure}

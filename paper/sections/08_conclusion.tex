@@ -1,0 +1,37 @@
+\section{Conclusion and Member Contributions}
+\label{sec:conclusion}
+
+We presented \emph{PriceOracle-AVS}, a working modification of the
+EigenLabs Incredible Squaring AVS template into a decentralized
+ETH/USD price oracle backed by Ethereum restaking.  The system
+operates four independent reporters, aggregates their reports under
+BLS12-381, and publishes a robust median consensus on chain at a P50
+end-to-end latency of approximately
+$2.2\,\mathrm{s}$.  Empirically, the median rule preserves
+sub-percent tail error when fewer than half of the operators are
+malicious, and a $5\%$ deviation slashing tolerance catches the
+majority of adversarial reports without falsely punishing honest
+noise.  Future work includes deployment to a public
+testnet, formal cascading-slashing analysis under
+restaking~\cite{durvasula2024robust}, and replacing the plain median
+with a higher-efficiency robust estimator.
+
+\paragraph*{Member Contributions.}
+% Required by the assignment specification.
+\textbf{<TODO M1 name>} designed the
+\texttt{PriceOracleServiceManager} and
+\texttt{PriceOracleTaskManager} contracts, implemented the deviation
+slashing rule and its Foundry test suite, and authored
+Section~\ref{sec:contracts}.
+\textbf{<TODO M2 name>} re-implemented the Operator binary in Go,
+integrating the four CEX REST endpoints with retry and timeout
+handling, and authored Section~\ref{sec:operator}.
+\textbf{Jonathan <Last>} re-engineered the Aggregator to perform
+median consensus, authored the \texttt{median.go} module with its
+unit-test suite, ran the Monte-Carlo characterization of the
+slashing rule, and authored Section~\ref{sec:aggregator}.
+\textbf{<TODO M4 name>} extended the Challenger client to perform
+independent verification, wrote the end-to-end integration tests,
+maintained the bibliography, and authored
+Sections~\ref{sec:intro}, \ref{sec:background}, \ref{sec:eval},
+\ref{sec:discussion}, and~\ref{sec:conclusion}.

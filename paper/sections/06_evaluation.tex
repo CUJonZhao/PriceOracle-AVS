@@ -1,0 +1,77 @@
+\section{End-to-End Evaluation}
+\label{sec:eval}
+
+% =====================================================================
+%  AUTHOR: M4
+%  TARGET LENGTH: ~0.8 column page (≈ 550 words)
+%  STRUCTURE:
+%   A. Test setup: anvil + 4 operators (each pinned to one CEX) +
+%      1 aggregator + 1 challenger.
+%   B. Metrics:
+%       - end-to-end latency (task created -> on-chain response)
+%       - BLS verifyAggregate gas cost (`forge test --gas-report`)
+%       - Per-CEX price dispersion (the natural noise floor)
+%   C. Cost comparison vs Chainlink ETH/USD aggregator (cite
+%      breidenbach2021chainlink). Use the publicly listed
+%      Chainlink heartbeat (1 hour) and deviation threshold (0.5%)
+%      as their parameters.
+%   D. Failure modes: 1 operator offline, 2 operators offline, etc.
+%   E. 2-3 figures from M4's experiments.
+% =====================================================================
+
+% TODO M4: subsection A.
+
+% TODO M4: subsection B with a measured-numbers table:
+
+\begin{table}[t]
+  \centering
+  \caption{Measured costs and latencies on a local Anvil instance.}
+  \label{tab:eval-numbers}
+  \begin{tabular}{lr}
+    \toprule
+    Metric & Value \\
+    \midrule
+    Median end-to-end latency (ms)        & \textit{TBD by M4} \\
+    P95 end-to-end latency (ms)           & \textit{TBD} \\
+    BLS aggregate verify (gas)            & \textit{TBD} \\
+    Total task gas (incl.\ slashing path) & \textit{TBD} \\
+    Operators online                      & 4 \\
+    Quorum threshold                      & 67\% \\
+    Tolerance $\tau$                      & 5\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% TODO M4: subsection C with a side-by-side comparison vs Chainlink.
+
+\begin{table}[t]
+  \centering
+  \caption{PriceOracle-AVS vs.\ Chainlink Price
+           Feeds~\cite{breidenbach2021chainlink}.}
+  \label{tab:vs-chainlink}
+  \begin{tabular}{lll}
+    \toprule
+                       & PriceOracle-AVS & Chainlink Price Feeds \\
+    \midrule
+    Reporters          & Permissionless restakers & Permissioned set \\
+    Aggregation        & On-chain BLS median & Off-chain median \\
+    Update cadence     & 5 s              & 1 h heartbeat \\
+    Deviation trigger  & 5\% slash        & 0.5\% update \\
+    Security source    & Restaked ETH     & Native LINK + reputation \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% TODO M4: subsection D - failure modes.
+
+% TODO M4: subsection E.
+
+\begin{figure}[t]
+  \centering
+  \framebox[0.95\columnwidth][c]{\raisebox{1.2cm}{\textit{[placeholder: per-CEX price spread vs time]}}}
+  \caption{Observed disagreement among the four CEX feeds during a
+           ten-minute Anvil run.  The 95th percentile spread of
+           $X\,\mathrm{bp}$ is well within our $\tau{=}500\,\mathrm{bp}$
+           slashing tolerance.}
+  \label{fig:cex-spread}
+\end{figure}

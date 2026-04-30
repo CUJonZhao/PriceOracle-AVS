@@ -1,0 +1,63 @@
+\section{Introduction}
+\label{sec:intro}
+
+\IEEEPARstart{D}{ecentralized} finance protocols rely on price oracles
+to value collateral, settle perpetuals, and trigger liquidations.
+Yet the past four years have seen repeated nine-figure exploits in
+which attackers manipulated thinly-defended oracle pipelines\,---\,Mango
+Markets, bZx, and Cream Finance among them.  Even systems marketed as
+``decentralized,'' such as Chainlink Price
+Feeds~\cite{breidenbach2021chainlink}, are operated by a small,
+permissioned set of reporters whose economic exposure is decoupled
+from Ethereum's broader security budget.  If the reporters collude
+or are subverted, no on-chain mechanism punishes them at scale.
+
+A natural question is whether the same restaked Ether that already
+secures Ethereum consensus could simultaneously back an oracle
+service.  EigenLayer answers this affirmatively~\cite{eigenlayer2023}.
+In its model, an Actively Validated Service (AVS) is any off-chain
+protocol whose participants opt in to slashing of their staked ETH
+should they violate the protocol's rules.  EigenLabs ships an
+open-source ``Incredible Squaring'' template~\cite{layrlabs_isavs}
+that demonstrates the plumbing in miniature: operators receive a
+number, return its square, sign the response under BLS12-381, and an
+aggregator publishes the quorum-signed answer on chain.  The template
+is deliberately a toy.  It is unclear from the template alone how
+much engineering effort is required to turn this scaffold into an
+economically meaningful service, and what design decisions arise
+along the way.
+
+In this work we close that gap by transforming the Incredible
+Squaring template into \emph{PriceOracle-AVS}, a working ETH/USD
+price oracle whose security derives from EigenLayer restaking.
+Operators independently query four major centralized exchanges
+(Binance, Coinbase, Kraken, OKX), sign their reports under BLS12-381,
+and submit them to an aggregator that computes the statistical
+median rather than the mean\,---\,a choice we empirically justify in
+Section~\ref{sec:aggregator}.  We propose a deviation slashing rule
+that punishes any operator whose individual report deviates from
+the median by more than a configurable threshold $\tau$.  We deploy
+the full pipeline against a local Anvil testnet and measure its
+end-to-end latency, gas cost, and adversarial robustness.
+
+\textbf{Contributions.}  This paper makes three contributions.
+\begin{itemize}
+  \item We design and implement \emph{PriceOracle-AVS}, a working
+        modification of the EigenLabs Incredible Squaring template
+        that turns it into a decentralized ETH/USD price oracle.
+  \item We propose a \emph{deviation slashing rule} ($\tau{=}5\%$
+        in our deployment) and characterize its true-positive vs.\
+        false-positive trade-off empirically.
+  \item We present an end-to-end evaluation on a local Anvil
+        testnet, including BLS gas cost, latency, and a comparison
+        against Chainlink Price Feeds.
+\end{itemize}
+
+The remainder of the paper is organized as follows.
+Section~\ref{sec:background} reviews EigenLayer restaking.
+Section~\ref{sec:contracts} presents our smart-contract modifications.
+Section~\ref{sec:operator} details the operator implementation.
+Section~\ref{sec:aggregator} analyses the BLS aggregation and median
+consensus.  Section~\ref{sec:eval} reports end-to-end results,
+Section~\ref{sec:discussion} discusses limitations, and
+Section~\ref{sec:conclusion} concludes.

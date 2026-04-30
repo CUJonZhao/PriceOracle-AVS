@@ -1,0 +1,108 @@
+% =====================================================================
+%  EE6883 Final Project (Spring 2026)
+%  PriceOracle-AVS: A Modified EigenLayer AVS for Decentralized Price Feeds
+%
+%  IEEE conference template (double column). 4-6 pages excluding refs.
+%  Compile with:  pdflatex main; bibtex main; pdflatex main; pdflatex main
+%  Or use latexmk:  latexmk -pdf main.tex
+% =====================================================================
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+% --- packages ---------------------------------------------------------
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+% Solidity / Go listing styles
+\definecolor{listinggray}{gray}{0.95}
+\definecolor{kw}{rgb}{0.13,0.29,0.53}
+\definecolor{cmt}{rgb}{0.30,0.50,0.30}
+\definecolor{str}{rgb}{0.66,0.13,0.13}
+\lstset{
+  backgroundcolor=\color{listinggray},
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{kw}\bfseries,
+  commentstyle=\color{cmt}\itshape,
+  stringstyle=\color{str},
+  breaklines=true,
+  captionpos=b,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  showstringspaces=false,
+  tabsize=2,
+}
+\lstdefinelanguage{Solidity}{
+  keywords={contract, function, address, mapping, struct, modifier, public, external,
+           internal, private, returns, return, view, pure, payable, memory, storage,
+           if, else, for, while, require, emit, event, uint256, uint32, bytes, bool,
+           constant, immutable, override, virtual},
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]",
+}
+
+% --- title block ------------------------------------------------------
+\title{PriceOracle-AVS: A Modified EigenLayer Actively Validated Service for Decentralized Price Feeds}
+
+\author{%
+  \IEEEauthorblockN{<TODO: M1 Solidity>\IEEEauthorrefmark{1},
+                    <TODO: M2 Operator>\IEEEauthorrefmark{1},
+                    Jonathan <Last>\IEEEauthorrefmark{1},
+                    <TODO: M4>\IEEEauthorrefmark{1}}
+  \IEEEauthorblockA{\IEEEauthorrefmark{1}Department of Electrical Engineering,
+                    Columbia University, New York, NY, USA}%
+}
+
+\begin{document}
+
+\maketitle
+
+% --- abstract ---------------------------------------------------------
+\begin{abstract}
+Restaking protocols such as EigenLayer let users repurpose staked
+ETH as economic security for arbitrary Actively Validated Services
+(AVSs).  We design and implement \emph{PriceOracle-AVS}, a working
+modification of the EigenLabs \emph{Incredible Squaring} reference
+template that turns it into a decentralized ETH/USD price oracle.
+Operators independently query four major centralized exchanges,
+sign their reports under BLS12-381, and submit them to an aggregator
+that computes a robust median consensus.  We propose a deviation
+slashing rule that punishes operators whose reports diverge from the
+median by more than a configurable threshold, and analyze its
+detection-vs-false-positive trade-off via Monte-Carlo simulation.
+On a local Anvil testnet our pipeline reaches consensus with a
+P50 end-to-end latency of \textasciitilde2.2~s, and its median rule
+preserves the standard sub-50\% breakdown guarantee for adversarial
+operator reports, demonstrating how the AVS pattern generalizes from
+toy compute to economically meaningful DeFi infrastructure.
+\end{abstract}
+
+\begin{IEEEkeywords}
+EigenLayer, restaking, decentralized oracle, BLS aggregation,
+slashing, Ethereum.
+\end{IEEEkeywords}
+
+% --- sections ---------------------------------------------------------
+\input{sections/01_intro}
+\input{sections/02_eigenlayer_background}
+\input{sections/03_contracts}
+\input{sections/04_operator}
+\input{sections/05_aggregator}
+\input{sections/06_evaluation}
+\input{sections/07_discussion}
+\input{sections/08_conclusion}
+
+% --- references -------------------------------------------------------
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

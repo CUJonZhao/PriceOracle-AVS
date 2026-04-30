@@ -1,0 +1,50 @@
+\section{Discussion and Limitations}
+\label{sec:discussion}
+
+\subsection{Liveness vs.\ Safety}
+
+Our 67\% quorum threshold (inherited from the Incredible Squaring
+template) tolerates up to 33\% of operators going offline without
+halting the oracle.  Beyond that point the aggregator simply cannot
+publish a response and downstream consumers must fall back to a stale
+price\,---\,a clear safety/liveness trade-off.  Lowering the quorum
+threshold improves liveness but reduces the cost of a 51\%-style
+adversary.  We retain 67\% as a defensible default and leave dynamic
+quorum tuning to future work.
+
+\subsection{Per-Task Economic Analysis}
+
+A profitable single-shot price-manipulation attack requires the
+adversary to push the on-chain consensus by more than $\tau{=}5\%$,
+which by construction triggers slashing on every malicious
+operator.  An adversary who under-biases (\textless 5\%) avoids
+slashing but obtains only a small expected profit per task; over the
+millions of tasks an oracle handles in its lifetime, this is
+strictly dominated by simply running an honest operator and
+collecting fee revenue.  The remaining attack surface is
+\emph{collusion in the majority}, which by EigenLayer's design
+requires controlling more than half of the restaked
+ETH\,---\,precisely the security assumption Ethereum already
+makes for consensus.
+
+\subsection{Comparison with Optimistic Oracles}
+
+UMA's optimistic oracle~\cite{uma2020} takes a different stance: it
+assumes a posted price is correct unless explicitly disputed within
+a challenge window.  The two models complement each other.
+PriceOracle-AVS provides low-latency real-time feeds at modest
+on-chain cost; UMA provides high-assurance dispute-driven prices for
+infrequent, high-stakes settlements.  A practical DeFi protocol may
+well consume both.
+
+\subsection{Future Work}
+
+Three directions stand out.  First, deployment to Ethereum's Holesky
+testnet would expose the system to realistic gas markets and operator
+diversity.  Second, formal analysis of cascading slashing risk under
+the framework of Durvasula and Roughgarden~\cite{durvasula2024robust}
+would let us set per-AVS slashing magnitudes that respect a global
+solvency budget.  Third, the median rule could be replaced by a
+trimmed mean or Theil--Sen estimator, both of which retain the
+robustness guarantee of the median while reducing
+estimator variance under low-noise conditions.

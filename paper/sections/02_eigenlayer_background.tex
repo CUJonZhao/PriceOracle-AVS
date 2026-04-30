@@ -1,0 +1,61 @@
+\section{EigenLayer Restaking Background}
+\label{sec:background}
+
+\subsection{From Staking to Restaking}
+
+Ethereum validators bond 32~ETH to participate in consensus.  This
+stake secures one service\,---\,Ethereum's own block production and
+finality\,---\,and is slashable for protocol-level
+faults~\cite{buterin2014ethereum}.  EigenLayer's central observation
+is that this same capital can simultaneously back \emph{additional}
+services if the staker explicitly opts in to additional slashing
+conditions for them~\cite{eigenlayer2023}.  The EigenLayer contracts
+expose a \texttt{Strategy} primitive that lets a staker delegate
+their bonded ETH (or ETH-derivative LSTs) to one or more Operators
+who run AVS clients.  Slashing on any registered AVS reduces the
+underlying restaked balance, and the shortfall is socialized to the
+delegators.
+
+\subsection{The Four AVS Roles}
+
+A typical AVS implemented on top of EigenLayer comprises four roles.
+The \emph{ServiceManager} is a Solidity contract that the AVS
+operator deploys to register itself with the EigenLayer core, declare
+its slashing rules, and gate operator opt-in.  The
+\emph{TaskManager} is the AVS-specific contract that emits tasks and
+verifies responses; in our system it owns the ETH/USD price-quote
+schedule.  \emph{Operators} are off-chain agents (Go binaries in our
+case) that listen for new tasks, perform the AVS-defined computation,
+sign the response with their BLS private key, and forward the
+signature to an \emph{Aggregator}.  The Aggregator collects signatures
+until the quorum threshold is met, combines them into a single
+BLS-aggregated signature, and submits the final response on chain
+where the TaskManager verifies it~\cite{layrlabs_isavs,eigenlabs_avsbook}.
+
+\subsection{Alternatives and Shared Security}
+
+EigenLayer is not the only shared-security
+design.  Symbiotic~\cite{symbiotic2024} offers a
+permissionless variant where any ERC-20 collateral can secure any
+network, with slashing logic externalized to the network's own
+contracts.  Karak~\cite{karak2024} provides a similar restaking layer
+across multiple L1s with a focus on developer ergonomics.  All three
+designs share the same fundamental risk:
+\emph{cascading slashing}\,---\,a single bug in any participating
+AVS can cause coordinated losses across the entire restaker
+set.  Durvasula and Roughgarden formalize this risk and derive
+sufficient conditions on individual-AVS slashing magnitudes that
+guarantee whole-network solvency~\cite{durvasula2024robust}.  Our
+work targets EigenLayer because of its mature tooling and reference
+template, but the design lessons transfer to the other two.
+
+\begin{figure}[t]
+  \centering
+  % \includegraphics[width=0.95\columnwidth]{figures/fig_eigenlayer_overview.pdf}
+  \framebox[0.95\columnwidth][c]{\raisebox{1.2cm}{\textit{[placeholder: EigenLayer architecture diagram --- M4 to add]}}}
+  \caption{High-level data flow between the AVS contracts, the
+           registered Operators (whose ETH is restaked), and the
+           off-chain Aggregator and Challenger services.  Adapted
+           from~\cite{eigenlabs_avsbook}.}
+  \label{fig:eigenlayer-overview}
+\end{figure}

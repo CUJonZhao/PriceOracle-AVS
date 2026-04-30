@@ -1,0 +1,31 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fls
+*.fdb_latexmk
+*.log
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Go build/test artifacts
+*.test
+coverage.out
+
+# Local environment files
+.env
+.env.*
