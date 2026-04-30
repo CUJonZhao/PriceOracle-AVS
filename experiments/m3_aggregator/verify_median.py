@@ -47,15 +47,15 @@ def run():
 
     print("Median tests")
     check("Median_OddCount",
-          median([3500_000000, 3505_000000, 3490_000000]),
-          3500_000000)
+          median([3500_00000000, 3505_00000000, 3490_00000000]),
+          3500_00000000)
     check("Median_EvenCount",
-          median([3500_000000, 3502_000000, 3506_000000, 3508_000000]),
-          3504_000000)
+          median([3500_00000000, 3502_00000000, 3506_00000000, 3508_00000000]),
+          3504_00000000)
     check("Median_Empty", median([]), 0)
     check("Median_RobustToOneOutlier",
-          median([3500_000000, 3502_000000, 3505_000000, 99999_000000]),
-          3503_500000)
+          median([3500_00000000, 3502_00000000, 3505_00000000, 99999_00000000]),
+          3503_50000000)
 
     # confirm input slice not mutated
     inp = [3, 1, 2]
@@ -70,13 +70,13 @@ def run():
 
     print("\nDetectOutliers tests")
     check("DetectOutliers_FivePercentBand",
-          detect_outliers([3500_000000, 3600_000000, 3700_000000,
-                           3300_000000, 3400_000000],
-                          3500_000000, 5),
+          detect_outliers([3500_00000000, 3600_00000000, 3700_00000000,
+                           3300_00000000, 3400_00000000],
+                          3500_00000000, 5),
           [2, 3])
     check("DetectOutliers_NoneFlagged",
-          detect_outliers([3490_000000, 3505_000000, 3510_000000],
-                          3500_000000, 5),
+          detect_outliers([3490_00000000, 3505_00000000, 3510_00000000],
+                          3500_00000000, 5),
           [])
     check("DetectOutliers_ZeroMedian",
           detect_outliers([1, -1], 0, 5),

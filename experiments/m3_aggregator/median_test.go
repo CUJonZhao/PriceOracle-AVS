@@ -9,19 +9,19 @@ import (
 func bi(x int64) *big.Int { return big.NewInt(x) }
 
 func TestMedian_OddCount(t *testing.T) {
-	prices := []*big.Int{bi(3500_000000), bi(3505_000000), bi(3490_000000)}
+	prices := []*big.Int{bi(3500_00000000), bi(3505_00000000), bi(3490_00000000)}
 	got := Median(prices)
-	want := bi(3500_000000)
+	want := bi(3500_00000000)
 	if got.Cmp(want) != 0 {
 		t.Errorf("Median odd: got %v, want %v", got, want)
 	}
 }
 
 func TestMedian_EvenCount(t *testing.T) {
-	prices := []*big.Int{bi(3500_000000), bi(3502_000000), bi(3506_000000), bi(3508_000000)}
+	prices := []*big.Int{bi(3500_00000000), bi(3502_00000000), bi(3506_00000000), bi(3508_00000000)}
 	got := Median(prices)
 	// floor((3502 + 3506) / 2) = 3504
-	want := bi(3504_000000)
+	want := bi(3504_00000000)
 	if got.Cmp(want) != 0 {
 		t.Errorf("Median even: got %v, want %v", got, want)
 	}
@@ -38,14 +38,14 @@ func TestMedian_RobustToOneOutlier(t *testing.T) {
 	// One operator reports a wildly wrong number — median should
 	// barely move, demonstrating the robustness motivation.
 	prices := []*big.Int{
-		bi(3500_000000),
-		bi(3502_000000),
-		bi(3505_000000),
-		bi(99999_000000), // outlier
+		bi(3500_00000000),
+		bi(3502_00000000),
+		bi(3505_00000000),
+		bi(99999_00000000), // outlier
 	}
 	got := Median(prices)
 	// sorted: [3500, 3502, 3505, 99999]; median = floor((3502+3505)/2) = 3503
-	want := bi(3503_500000)
+	want := bi(3503_50000000)
 	if got.Cmp(want) != 0 {
 		t.Errorf("Median robust: got %v, want %v", got, want)
 	}
@@ -78,13 +78,13 @@ func TestVariance_Empty(t *testing.T) {
 
 func TestDetectOutliers_FivePercentBand(t *testing.T) {
 	// median = 3500, 5% band -> [3325, 3675].
-	median := bi(3500_000000)
+	median := bi(3500_00000000)
 	prices := []*big.Int{
-		bi(3500_000000), // in
-		bi(3600_000000), // in (+2.86%)
-		bi(3700_000000), // OUT (+5.71%)
-		bi(3300_000000), // OUT (-5.71%)
-		bi(3400_000000), // in
+		bi(3500_00000000), // in
+		bi(3600_00000000), // in (+2.86%)
+		bi(3700_00000000), // OUT (+5.71%)
+		bi(3300_00000000), // OUT (-5.71%)
+		bi(3400_00000000), // in
 	}
 	got := DetectOutliers(prices, median, 5)
 	want := []int{2, 3}
@@ -94,8 +94,8 @@ func TestDetectOutliers_FivePercentBand(t *testing.T) {
 }
 
 func TestDetectOutliers_NoneFlagged(t *testing.T) {
-	median := bi(3500_000000)
-	prices := []*big.Int{bi(3490_000000), bi(3505_000000), bi(3510_000000)}
+	median := bi(3500_00000000)
+	prices := []*big.Int{bi(3490_00000000), bi(3505_00000000), bi(3510_00000000)}
 	got := DetectOutliers(prices, median, 5)
 	if len(got) != 0 {
 		t.Errorf("DetectOutliers expected none, got %v", got)
@@ -123,13 +123,13 @@ func sliceEqual(a, b []int) bool {
 
 func BenchmarkMedianSevenOperators(b *testing.B) {
 	prices := []*big.Int{
-		bi(3500_000000),
-		bi(3502_000000),
-		bi(3498_000000),
-		bi(3501_000000),
-		bi(3499_000000),
-		bi(3504_000000),
-		bi(3300_000000),
+		bi(3500_00000000),
+		bi(3502_00000000),
+		bi(3498_00000000),
+		bi(3501_00000000),
+		bi(3499_00000000),
+		bi(3504_00000000),
+		bi(3300_00000000),
 	}
 
 	for i := 0; i < b.N; i++ {
@@ -138,15 +138,15 @@ func BenchmarkMedianSevenOperators(b *testing.B) {
 }
 
 func BenchmarkDetectOutliersSevenOperators(b *testing.B) {
-	median := bi(3500_000000)
+	median := bi(3500_00000000)
 	prices := []*big.Int{
-		bi(3500_000000),
-		bi(3502_000000),
-		bi(3498_000000),
-		bi(3700_000000),
-		bi(3499_000000),
-		bi(3504_000000),
-		bi(3300_000000),
+		bi(3500_00000000),
+		bi(3502_00000000),
+		bi(3498_00000000),
+		bi(3700_00000000),
+		bi(3499_00000000),
+		bi(3504_00000000),
+		bi(3300_00000000),
 	}
 
 	for i := 0; i < b.N; i++ {

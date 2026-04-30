@@ -62,8 +62,8 @@ go test -bench=. -benchmem -count=5 ./aggregator/...
 `PriceOracle-AVS/aggregator/aggregator.go` 和 M1 生成的新 ABI binding，
 然后按该文档完成：
 
-1. task 字段从 squaring number 换成 price task 的 `AssetPair`。
-2. task generator 从 `sendNewTaskNumberToSquare` 改成 `sendNewPriceTask`。
-3. `ProcessSignedTaskResponse` 记录每个 operator 的 `ReportedPrice`。
+1. task 字段从 squaring number 换成 M1 当前的 `PricePair` / `PriceDecimals`。
+2. task generator 从 `sendNewTaskNumberToSquare` 改成 `SendNewPriceTask`。
+3. `ProcessSignedTaskResponse` 记录每个 operator 的 `EthUsdPrice`。
 4. `sendAggregatedResponseToContract` 调用 `Median`、`Variance`、
-   `DetectOutliers`，把 median 和 variance 上链。
+   `DetectOutliers`，把 median 作为 `EthUsdPrice` 上链。

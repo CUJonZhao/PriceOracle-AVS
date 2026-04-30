@@ -6,8 +6,8 @@
 // a small number of malicious or buggy operators cannot move the
 // consensus price arbitrarily far from the truth.
 //
-// All prices are represented as *big.Int with 6 fixed decimal places,
-// matching Chainlink's USD pair convention (e.g., 3500_000000 == $3500.00).
+// All prices are represented as *big.Int with 8 fixed decimal places,
+// matching the current TaskManager contract (e.g., 3500_00000000 == $3500.00).
 package aggregator
 
 import (

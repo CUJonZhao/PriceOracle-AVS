@@ -6,6 +6,13 @@
 
 ## 改动总览
 
+> 2026-04-30 更新：M1 初版合约已经把接口改成
+> `Task{pricePair, priceDecimals, taskCreatedBlock, quorumNumbers, quorumThresholdPercentage}`
+> 和 `TaskResponse{referenceTaskIndex, ethUsdPrice}`。所以本文早期写的
+> `AssetPair`、`ReportedPrice`、`PriceMedian`、`PriceVariance` 是旧占位名；
+> 真正接 M1 当前代码时应以 `PricePair`、`PriceDecimals`、`EthUsdPrice`
+> 为准。详细接口审查见 `m1_interface_review.md`。
+
 | # | 文件 | 改动 | 复杂度 |
 |---|------|------|--------|
 | ① | `aggregator/aggregator.go` | Task struct 字段名替换 | 5 分钟 |
@@ -24,9 +31,10 @@
 grep -n "NumberToBeSquared\|numberToBeSquared" aggregator/*.go
 ```
 
-替换规则：
-- `NumberToBeSquared`  →  `AssetPair`（类型从 `uint32` 改成 `string`）
-- `numberToBeSquared`  →  `assetPair`
+替换规则（按 M1 当前接口）：
+- `NumberToBeSquared` → `PricePair`（`bytes32`，Go binding 通常是 `[32]byte`）
+- 新增/使用 `PriceDecimals`（`uint8`）
+- `numberToBeSquared` 这类本地变量移除，因为 M1 的 `createNewTask` 不再接收数字
 
 注意：合约侧（M1）会同步把 ABI binding 重新 generate，所以你这边
 import 进来的 binding 类型字段也会变。先编译看哪里红波浪线。
@@ -40,9 +48,10 @@ type IIncredibleSquaringTaskManagerTask struct {
     QuorumThresholdPercentage uint32
 }
 
-// after
-type IPriceOracleTaskManagerTask struct {
-    AssetPair                string
+// after（M1 当前接口生成 binding 后的形状，名称以 abigen 实际输出为准）
+type IIncredibleSquaringTaskManagerTask struct {
+    PricePair                [32]byte
+    PriceDecimals            uint8
     TaskCreatedBlock         uint32
     QuorumNumbers            []byte
     QuorumThresholdPercentage uint32
@@ -71,20 +80,19 @@ func (agg *Aggregator) sendNewTaskNumberToSquare() {
 }
 ```
 
-改成：
+M1 当前合约的 `createNewTask` 签名是：
+```solidity
+function createNewTask(uint32 quorumThresholdPercentage, bytes calldata quorumNumbers) external;
+```
+
+所以 writer 层也应该从 `SendNewTaskNumberToSquare(ctx, num, quorum, nums)`
+改成不接收 `num` 的 `SendNewPriceTask(ctx, quorum, nums)`。
+
+aggregator 侧改成：
 ```go
-// SupportedAssetPairs is the small fixed set of CEX feeds the Operators know.
-// Adding more pairs requires the Operator nodes to ship a new release.
-var SupportedAssetPairs = []string{"ETH/USD", "BTC/USD"}
-
-func (agg *Aggregator) sendNewPriceTask() {
-    // round-robin through the supported pairs so we exercise both feeds
-    pair := SupportedAssetPairs[agg.taskCounter%len(SupportedAssetPairs)]
-    agg.taskCounter++
-
+func (agg *Aggregator) sendNewPriceTask() error {
     newTask, taskIndex, err := agg.avsWriter.SendNewPriceTask(
         context.Background(),
-        pair,
         QUORUM_THRESHOLD_NUMERATOR,
         QUORUM_NUMBERS,
     )
@@ -96,12 +104,15 @@ func (agg *Aggregator) sendNewPriceTask() {
     agg.tasks[taskIndex] = newTask
     agg.priceQuotes[taskIndex] = make(map[sdktypes.OperatorId]*big.Int)
     agg.tasksMu.Unlock()
-    agg.logger.Info("created new price task", "pair", pair, "taskIndex", taskIndex)
+    agg.logger.Info("created new ETH/USD price task",
+        "taskIndex", taskIndex,
+        "priceDecimals", newTask.PriceDecimals,
+    )
+    return nil
 }
 ```
 
 > 别忘了在 `Aggregator` struct 里加两个字段：
-> - `taskCounter uint64`
 > - `priceQuotes map[uint32]map[sdktypes.OperatorId]*big.Int`
 > - `tasksMu sync.RWMutex`（如果原版没有的话）
 
@@ -156,7 +167,7 @@ func (agg *Aggregator) ProcessSignedTaskResponse(
         agg.priceQuotes[taskIndex] = make(map[sdktypes.OperatorId]*big.Int)
     }
     agg.priceQuotes[taskIndex][signedResp.OperatorId] =
-        new(big.Int).Set(signedResp.TaskResponse.ReportedPrice)
+        new(big.Int).Set(signedResp.TaskResponse.EthUsdPrice)
     agg.tasksMu.Unlock()
 
     err := agg.blsAggregationService.ProcessNewSignature(
@@ -171,9 +182,8 @@ func (agg *Aggregator) ProcessSignedTaskResponse(
 }
 ```
 
-> `signedResp.TaskResponse.ReportedPrice` 这个字段 M1 会在 contracts 里
-> 加，然后 abigen 重新生成 binding 后这里就有了。M1 早一步把字段定下来，
-> 你这边 import 后填上即可。
+> M1 当前字段名是 `ethUsdPrice`，Go binding 预计为 `EthUsdPrice`。
+> 但 bindings 目前还是旧的 `NumberSquared`，必须先 `make bindings`。
 
 ---
 
@@ -233,10 +243,9 @@ func (agg *Aggregator) sendAggregatedResponseToContract(
     )
 
     // 3) Build the on-chain TaskResponse (M1's new struct shape).
-    onchainResp := taskmanager.IPriceOracleTaskManagerTaskResponse{
+    onchainResp := cstaskmanager.IIncredibleSquaringTaskManagerTaskResponse{
         ReferenceTaskIndex: taskIdx,
-        PriceMedian:   medianPrice,
-        PriceVariance: variance,
+        EthUsdPrice: medianPrice,
     }
 
     nonSignerStakesAndSignature := buildNonSignerStakesAndSignature(blsResp)
@@ -258,7 +267,7 @@ func (agg *Aggregator) sendAggregatedResponseToContract(
         agg.challengeQueue <- ChallengeEntry{
             TaskIndex:        taskIdx,
             OperatorId:       operatorIds[idx],
-            ReportedPrice:    quotes[idx],
+            OperatorPrice:    quotes[idx],
             AggregatorMedian: medianPrice,
         }
     }

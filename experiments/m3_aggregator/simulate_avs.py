@@ -11,7 +11,7 @@ EigenLayer dev environment is still being set up. We use it to:
        value for the slashing rule;
   (iii) generate publication-quality figures for §V of the paper.
 
-The numbers used here (4-7 honest CEX prices, ~$3500 ETH/USD, 6 decimals)
+The numbers used here (4-7 honest CEX prices, ~$3500 ETH/USD, 8 decimals)
 match what the real Go aggregator will see in production.
 
 Run:
@@ -38,8 +38,8 @@ except ImportError:
     HAVE_MPL = False
 
 
-# 6-decimal fixed-point convention: 3500_000000 == $3500.00
-TRUE_PRICE = 3500_000000
+# 8-decimal fixed-point convention: 3500_00000000 == $3500.00
+TRUE_PRICE = 3500_00000000
 
 
 # ----- algorithm: mirrors median.go semantics ---------------------------
