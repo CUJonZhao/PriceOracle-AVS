@@ -218,14 +218,20 @@ func (c *Challenger) getNonSigningOperatorPubKeys(
 	method, err := cstmAbi.MethodById(methodSig)
 	if err != nil {
 		c.logger.Error("Error getting method", "err", err)
+		return nil
 	}
 
 	inputs, err := method.Inputs.Unpack(calldata[4:])
 	if err != nil {
 		c.logger.Error("Error unpacking calldata", "err", err)
+		return nil
+	}
+	if len(inputs) < 3 {
+		c.logger.Error("Unexpected calldata shape", "nInputs", len(inputs))
+		return nil
 	}
 
-	nonSignerStakesAndSignatureInput := inputs[2].(struct {
+	nonSignerStakesAndSignatureInput, ok := inputs[2].(struct {
 		NonSignerQuorumBitmapIndices []uint32 "json:\"nonSignerQuorumBitmapIndices\""
 		NonSignerPubkeys             []struct {
 			X *big.Int "json:\"X\""
@@ -247,6 +253,10 @@ func (c *Challenger) getNonSigningOperatorPubKeys(
 		TotalStakeIndices     []uint32   "json:\"totalStakeIndices\""
 		NonSignerStakeIndices [][]uint32 "json:\"nonSignerStakeIndices\""
 	})
+	if !ok {
+		c.logger.Error("Unexpected non-signer calldata type", "value", inputs[2])
+		return nil
+	}
 
 	nonSigningOperatorPubKeys := make(
 		[]cstaskmanager.BN254G1Point,

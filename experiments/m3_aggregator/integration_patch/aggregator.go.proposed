@@ -47,8 +47,7 @@ import (
 //      avoids sending an on-chain response that cannot verify.
 //
 //  (d) hashFunction encodes (referenceTaskIndex uint32, ethUsdPrice
-//      uint256) instead of (referenceTaskIndex uint32, numberSquared
-//      uint256) so the digest matches the new ABI.
+//      uint256), matching the new oracle ABI used by M1/M2.
 //
 //  IMPORTANT — protocol caveat:
 //  In the current single-round flow, each operator BLS-signs over its

@@ -37,30 +37,45 @@ fi
 echo "Backing up upstream files to .preM3.bak ..."
 cp -n "$UPSTREAM/aggregator/aggregator.go"     "$UPSTREAM/aggregator/aggregator.go.preM3.bak"     || true
 cp -n "$UPSTREAM/aggregator/rpc_server.go"     "$UPSTREAM/aggregator/rpc_server.go.preM3.bak"     || true
+cp -n "$UPSTREAM/aggregator/aggregator_test.go" "$UPSTREAM/aggregator/aggregator_test.go.preM3.bak" || true
+cp -n "$UPSTREAM/aggregator/rpc_server_test.go" "$UPSTREAM/aggregator/rpc_server_test.go.preM3.bak" || true
+cp -n "$UPSTREAM/aggregator/mocks/chain.go"    "$UPSTREAM/aggregator/mocks/chain.go.preM3.bak"    || true
 cp -n "$UPSTREAM/core/chainio/avs_writer.go"   "$UPSTREAM/core/chainio/avs_writer.go.preM3.bak"   || true
+cp -n "$UPSTREAM/core/chainio/mocks/avs_writer.go" "$UPSTREAM/core/chainio/mocks/avs_writer.go.preM3.bak" || true
 cp -n "$UPSTREAM/challenger/challenger.go"      "$UPSTREAM/challenger/challenger.go.preM3.bak"      || true
+cp -n "$UPSTREAM/challenger/challenger_test.go" "$UPSTREAM/challenger/challenger_test.go.preM3.bak" || true
 
 echo "Copying staged files into upstream ..."
 cp "$HERE/aggregator.go.proposed"   "$UPSTREAM/aggregator/aggregator.go"
 cp "$HERE/rpc_server.go.proposed"   "$UPSTREAM/aggregator/rpc_server.go"
+cp "$HERE/aggregator_test.go.proposed" "$UPSTREAM/aggregator/aggregator_test.go"
+cp "$HERE/rpc_server_test.go.proposed" "$UPSTREAM/aggregator/rpc_server_test.go"
+cp "$HERE/aggregator_chain_mock.go.proposed" "$UPSTREAM/aggregator/mocks/chain.go"
 cp "$HERE/avs_writer.go.proposed"   "$UPSTREAM/core/chainio/avs_writer.go"
+cp "$HERE/avs_writer_mock.go.proposed" "$UPSTREAM/core/chainio/mocks/avs_writer.go"
 cp "$HERE/median.go"                "$UPSTREAM/aggregator/median.go"
 cp "$HERE/median_test.go"           "$UPSTREAM/aggregator/median_test.go"
 cp "$HERE/challenger.go.proposed"   "$UPSTREAM/challenger/challenger.go"
+cp "$HERE/challenger_test.go.proposed" "$UPSTREAM/challenger/challenger_test.go"
 
 cat <<EOF
 
 Done. Files written into $UPSTREAM:
   aggregator/aggregator.go      (replaced; original at .preM3.bak)
   aggregator/rpc_server.go      (replaced; original at .preM3.bak)
+  aggregator/aggregator_test.go (replaced; original at .preM3.bak)
+  aggregator/rpc_server_test.go (replaced; original at .preM3.bak)
+  aggregator/mocks/chain.go     (replaced; original at .preM3.bak)
   aggregator/median.go          (new)
   aggregator/median_test.go     (new)
   core/chainio/avs_writer.go    (replaced; original at .preM3.bak)
+  core/chainio/mocks/avs_writer.go (replaced; original at .preM3.bak)
   challenger/challenger.go      (replaced; original at .preM3.bak)
+  challenger/challenger_test.go (replaced; original at .preM3.bak)
 
 Next steps inside \$UPSTREAM:
   1) make bindings   # if M1 hasn't already
   2) go build ./...  # confirms compile
-  3) go test ./aggregator/... -run "TestMedian|TestVariance|TestDetectOutliers"
+  3) go test ./aggregator/... ./challenger/...
   4) make e2e-test   # once M2 ships operator changes
 EOF
