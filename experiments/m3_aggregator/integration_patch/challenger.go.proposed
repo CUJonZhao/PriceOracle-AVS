@@ -1,0 +1,405 @@
+package challenger
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/Layr-Labs/eigensdk-go/logging"
+	"github.com/Layr-Labs/incredible-squaring-avs/common"
+	"github.com/Layr-Labs/incredible-squaring-avs/core/config"
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	commoneth "github.com/ethereum/go-ethereum/common"
+	typeseth "github.com/ethereum/go-ethereum/core/types"
+
+	"github.com/Layr-Labs/incredible-squaring-avs/challenger/types"
+	cstaskmanager "github.com/Layr-Labs/incredible-squaring-avs/contracts/bindings/IncredibleSquaringTaskManager"
+	"github.com/Layr-Labs/incredible-squaring-avs/core/chainio"
+)
+
+const (
+	defaultReferencePriceDecimals     = uint8(8)
+	defaultChallengeToleranceBps      = uint64(100)
+	challengerReferenceFetchTimeout   = 5 * time.Second
+	challengerReferencePriceEnv       = "CHALLENGER_REFERENCE_ETH_USD_PRICE"
+	challengerReferencePriceSourceEnv = "CHALLENGER_REFERENCE_ETH_USD_URL"
+)
+
+var challengerReferenceTickerURL = "https://api.exchange.coinbase.com/products/ETH-USD/ticker"
+
+type ChallengerClient interface {
+	TransactionByHash(ctx context.Context, hash commoneth.Hash) (tx *typeseth.Transaction, isPending bool, err error)
+}
+
+type Challenger struct {
+	logger             logging.Logger
+	ethClient          ChallengerClient
+	avsReader          chainio.AvsReaderer
+	avsWriter          chainio.AvsWriterer
+	avsSubscriber      chainio.AvsSubscriberer
+	tasks              map[uint32]cstaskmanager.IIncredibleSquaringTaskManagerTask
+	taskResponses      map[uint32]types.TaskResponseData
+	taskResponseChan   chan *cstaskmanager.ContractIncredibleSquaringTaskManagerTaskResponded
+	newTaskCreatedChan chan *cstaskmanager.ContractIncredibleSquaringTaskManagerNewTaskCreated
+}
+
+func NewChallenger(c *config.Config) (*Challenger, error) {
+
+	avsWriter, err := chainio.BuildAvsWriterFromConfig(c)
+	if err != nil {
+		c.Logger.Error("Cannot create EthWriter", "err", err)
+		return nil, err
+	}
+	avsReader, err := chainio.BuildAvsReaderFromConfig(c)
+	if err != nil {
+		c.Logger.Error("Cannot create EthReader", "err", err)
+		return nil, err
+	}
+	avsSubscriber, err := chainio.BuildAvsSubscriberFromConfig(c)
+	if err != nil {
+		c.Logger.Error("Cannot create EthSubscriber", "err", err)
+		return nil, err
+	}
+
+	if overrideURL := strings.TrimSpace(os.Getenv(challengerReferencePriceSourceEnv)); overrideURL != "" {
+		challengerReferenceTickerURL = overrideURL
+	}
+
+	challenger := &Challenger{
+		logger:             c.Logger,
+		ethClient:          &c.EthHttpClient,
+		avsReader:          avsReader,
+		avsWriter:          avsWriter,
+		avsSubscriber:      avsSubscriber,
+		tasks:              make(map[uint32]cstaskmanager.IIncredibleSquaringTaskManagerTask),
+		taskResponses:      make(map[uint32]types.TaskResponseData),
+		taskResponseChan:   make(chan *cstaskmanager.ContractIncredibleSquaringTaskManagerTaskResponded),
+		newTaskCreatedChan: make(chan *cstaskmanager.ContractIncredibleSquaringTaskManagerNewTaskCreated),
+	}
+
+	return challenger, nil
+}
+
+func (c *Challenger) Start(ctx context.Context) error {
+	c.logger.Info("Starting Challenger.")
+
+	newTaskSub := c.avsSubscriber.SubscribeToNewTasks(c.newTaskCreatedChan)
+	c.logger.Info("Subscribed to new tasks")
+
+	taskResponseSub := c.avsSubscriber.SubscribeToTaskResponses(c.taskResponseChan)
+	c.logger.Info("Subscribed to task responses")
+
+	for {
+		select {
+		case err := <-newTaskSub.Err():
+			c.logger.Error("Error in websocket subscription for new Task", "err", err)
+			newTaskSub.Unsubscribe()
+			newTaskSub = c.avsSubscriber.SubscribeToNewTasks(c.newTaskCreatedChan)
+
+		case err := <-taskResponseSub.Err():
+			c.logger.Error("Error in websocket subscription for task response", "err", err)
+			taskResponseSub.Unsubscribe()
+			taskResponseSub = c.avsSubscriber.SubscribeToTaskResponses(c.taskResponseChan)
+
+		case newTaskCreatedLog := <-c.newTaskCreatedChan:
+			c.logger.Info(
+				"New task created log received",
+				"taskIndex",
+				newTaskCreatedLog.TaskIndex,
+				"task",
+				newTaskCreatedLog.Task,
+			)
+			taskIndex := c.processNewTaskCreatedLog(newTaskCreatedLog)
+
+			if _, found := c.taskResponses[taskIndex]; found {
+				_ = c.callChallengeModule(taskIndex)
+			}
+
+		case taskResponseLog := <-c.taskResponseChan:
+			c.logger.Info("Task response log received", "taskResponse", taskResponseLog.TaskResponse)
+			taskIndex := c.processTaskResponseLog(taskResponseLog)
+
+			if _, found := c.tasks[taskIndex]; found {
+				_ = c.callChallengeModule(taskIndex)
+			}
+		}
+	}
+
+}
+
+func (c *Challenger) processNewTaskCreatedLog(
+	newTaskCreatedLog *cstaskmanager.ContractIncredibleSquaringTaskManagerNewTaskCreated,
+) uint32 {
+	c.tasks[newTaskCreatedLog.TaskIndex] = newTaskCreatedLog.Task
+	return newTaskCreatedLog.TaskIndex
+}
+
+func (c *Challenger) processTaskResponseLog(
+	taskResponseLog *cstaskmanager.ContractIncredibleSquaringTaskManagerTaskResponded,
+) uint32 {
+	taskResponseRawLog, err := c.avsSubscriber.ParseTaskResponded(taskResponseLog.Raw)
+	if err != nil {
+		c.logger.Error(
+			"Error parsing task response. skipping task (this is probably bad and should be investigated)",
+			"err",
+			err,
+		)
+	}
+
+	nonSigningOperatorPubKeys := c.getNonSigningOperatorPubKeys(taskResponseLog)
+	taskResponseData := types.TaskResponseData{
+		TaskResponse:              taskResponseLog.TaskResponse,
+		TaskResponseMetadata:      taskResponseLog.TaskResponseMetadata,
+		NonSigningOperatorPubKeys: nonSigningOperatorPubKeys,
+	}
+
+	c.taskResponses[taskResponseRawLog.TaskResponse.ReferenceTaskIndex] = taskResponseData
+	return taskResponseRawLog.TaskResponse.ReferenceTaskIndex
+}
+
+func (c *Challenger) callChallengeModule(taskIndex uint32) error {
+	task := c.tasks[taskIndex]
+	submittedPrice := c.taskResponses[taskIndex].TaskResponse.EthUsdPrice
+	if submittedPrice == nil || submittedPrice.Sign() <= 0 {
+		c.logger.Info("Aggregator submitted invalid ETH/USD price", "taskIndex", taskIndex, "submittedPrice", submittedPrice)
+		return c.raiseChallenge(taskIndex, big.NewInt(1))
+	}
+
+	referencePrice, err := c.fetchReferenceEthUsdPrice(task.PriceDecimals)
+	if err != nil {
+		c.logger.Error("Failed to fetch reference ETH/USD price; skipping challenge check", "taskIndex", taskIndex, "err", err)
+		return err
+	}
+
+	if !isWithinBps(submittedPrice, referencePrice, defaultChallengeToleranceBps) {
+		c.logger.Info("Submitted ETH/USD price is outside tolerance",
+			"taskIndex", taskIndex,
+			"submittedPrice", submittedPrice.String(),
+			"referencePrice", referencePrice.String(),
+			"toleranceBps", defaultChallengeToleranceBps,
+		)
+		return c.raiseChallenge(taskIndex, referencePrice)
+	}
+
+	c.logger.Info("Submitted ETH/USD price is within tolerance",
+		"taskIndex", taskIndex,
+		"submittedPrice", submittedPrice.String(),
+		"referencePrice", referencePrice.String(),
+		"toleranceBps", defaultChallengeToleranceBps,
+	)
+	return types.NoErrorInTaskResponse
+}
+
+func (c *Challenger) getNonSigningOperatorPubKeys(
+	vLog *cstaskmanager.ContractIncredibleSquaringTaskManagerTaskResponded,
+) []cstaskmanager.BN254G1Point {
+	txHash := vLog.Raw.TxHash
+	tx, _, err := c.ethClient.TransactionByHash(context.Background(), txHash)
+	if err != nil {
+		c.logger.Error("Error getting transaction by hash",
+			"txHash", txHash,
+			"err", err,
+		)
+	}
+	calldata := tx.Data()
+	cstmAbi, err := abi.JSON(bytes.NewReader(common.IncredibleSquaringTaskManagerAbi))
+	if err != nil {
+		c.logger.Error("Error getting Abi", "err", err)
+	}
+	methodSig := calldata[:4]
+	method, err := cstmAbi.MethodById(methodSig)
+	if err != nil {
+		c.logger.Error("Error getting method", "err", err)
+	}
+
+	inputs, err := method.Inputs.Unpack(calldata[4:])
+	if err != nil {
+		c.logger.Error("Error unpacking calldata", "err", err)
+	}
+
+	nonSignerStakesAndSignatureInput := inputs[2].(struct {
+		NonSignerQuorumBitmapIndices []uint32 "json:\"nonSignerQuorumBitmapIndices\""
+		NonSignerPubkeys             []struct {
+			X *big.Int "json:\"X\""
+			Y *big.Int "json:\"Y\""
+		} "json:\"nonSignerPubkeys\""
+		QuorumApks []struct {
+			X *big.Int "json:\"X\""
+			Y *big.Int "json:\"Y\""
+		} "json:\"quorumApks\""
+		ApkG2 struct {
+			X [2]*big.Int "json:\"X\""
+			Y [2]*big.Int "json:\"Y\""
+		} "json:\"apkG2\""
+		Sigma struct {
+			X *big.Int "json:\"X\""
+			Y *big.Int "json:\"Y\""
+		} "json:\"sigma\""
+		QuorumApkIndices      []uint32   "json:\"quorumApkIndices\""
+		TotalStakeIndices     []uint32   "json:\"totalStakeIndices\""
+		NonSignerStakeIndices [][]uint32 "json:\"nonSignerStakeIndices\""
+	})
+
+	nonSigningOperatorPubKeys := make(
+		[]cstaskmanager.BN254G1Point,
+		len(nonSignerStakesAndSignatureInput.NonSignerPubkeys),
+	)
+	for i, pubkey := range nonSignerStakesAndSignatureInput.NonSignerPubkeys {
+		nonSigningOperatorPubKeys[i] = cstaskmanager.BN254G1Point{
+			X: pubkey.X,
+			Y: pubkey.Y,
+		}
+	}
+
+	return nonSigningOperatorPubKeys
+}
+
+func (c *Challenger) raiseChallenge(taskIndex uint32, referenceEthUsdPrice *big.Int) error {
+	c.logger.Info("Challenger raising price challenge.", "taskIndex", taskIndex, "referenceEthUsdPrice", referenceEthUsdPrice.String())
+	c.logger.Debug("Task", "Task", c.tasks[taskIndex])
+	c.logger.Debug("TaskResponse", "TaskResponse", c.taskResponses[taskIndex].TaskResponse)
+	c.logger.Debug("TaskResponseMetadata", "TaskResponseMetadata", c.taskResponses[taskIndex].TaskResponseMetadata)
+	c.logger.Debug(
+		"NonSigningOperatorPubKeys",
+		"NonSigningOperatorPubKeys",
+		c.taskResponses[taskIndex].NonSigningOperatorPubKeys,
+	)
+
+	receipt, err := c.avsWriter.RaiseChallenge(
+		context.Background(),
+		c.tasks[taskIndex],
+		c.taskResponses[taskIndex].TaskResponse,
+		c.taskResponses[taskIndex].TaskResponseMetadata,
+		referenceEthUsdPrice,
+		c.taskResponses[taskIndex].NonSigningOperatorPubKeys,
+	)
+	if err != nil {
+		c.logger.Error("Challenger failed to raise challenge:", "err", err)
+		return fmt.Errorf("challenger failed to raise challenge: %w", err)
+	}
+	c.logger.Info("Challenge raised", "challengeTxHash", receipt.TxHash.Hex())
+	return nil
+}
+
+type challengerTickerResponse struct {
+	Price string `json:"price"`
+}
+
+func (c *Challenger) fetchReferenceEthUsdPrice(decimals uint8) (*big.Int, error) {
+	if decimals == 0 {
+		decimals = defaultReferencePriceDecimals
+	}
+
+	if overridePrice := strings.TrimSpace(os.Getenv(challengerReferencePriceEnv)); overridePrice != "" {
+		return scaleDecimalString(overridePrice, decimals)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), challengerReferenceFetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, challengerReferenceTickerURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	client := &http.Client{Timeout: challengerReferenceFetchTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+	}
+
+	var ticker challengerTickerResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&ticker); err != nil {
+		return nil, err
+	}
+	return scaleDecimalString(ticker.Price, decimals)
+}
+
+func scaleDecimalString(price string, decimals uint8) (*big.Int, error) {
+	price = strings.TrimSpace(price)
+	if price == "" {
+		return nil, errors.New("empty price")
+	}
+	if strings.HasPrefix(price, "-") {
+		return nil, errors.New("negative price")
+	}
+	price = strings.TrimPrefix(price, "+")
+
+	parts := strings.Split(price, ".")
+	if len(parts) > 2 {
+		return nil, errors.New("invalid decimal price")
+	}
+
+	integerPart := parts[0]
+	if integerPart == "" {
+		integerPart = "0"
+	}
+	if !isDecimalDigits(integerPart) {
+		return nil, errors.New("invalid integer price component")
+	}
+
+	fractionalPart := ""
+	if len(parts) == 2 {
+		fractionalPart = parts[1]
+	}
+	if fractionalPart != "" && !isDecimalDigits(fractionalPart) {
+		return nil, errors.New("invalid fractional price component")
+	}
+
+	scale := int(decimals)
+	if len(fractionalPart) > scale {
+		fractionalPart = fractionalPart[:scale]
+	} else {
+		fractionalPart += strings.Repeat("0", scale-len(fractionalPart))
+	}
+
+	fixedPointString := strings.TrimLeft(integerPart+fractionalPart, "0")
+	if fixedPointString == "" {
+		fixedPointString = "0"
+	}
+
+	scaledPrice, ok := new(big.Int).SetString(fixedPointString, 10)
+	if !ok {
+		return nil, errors.New("failed to parse scaled price")
+	}
+	if scaledPrice.Sign() <= 0 {
+		return nil, errors.New("price must be greater than zero")
+	}
+	return scaledPrice, nil
+}
+
+func isDecimalDigits(value string) bool {
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isWithinBps(submittedPrice, referencePrice *big.Int, toleranceBps uint64) bool {
+	if submittedPrice == nil || referencePrice == nil || referencePrice.Sign() <= 0 {
+		return false
+	}
+	diff := new(big.Int).Sub(submittedPrice, referencePrice)
+	diff.Abs(diff)
+
+	// Compare diff/reference <= toleranceBps/10000 without floating point:
+	// diff * 10000 <= reference * toleranceBps.
+	left := new(big.Int).Mul(diff, big.NewInt(10_000))
+	right := new(big.Int).Mul(referencePrice, new(big.Int).SetUint64(toleranceBps))
+	return left.Cmp(right) <= 0
+}

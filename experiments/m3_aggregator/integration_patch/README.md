@@ -13,6 +13,7 @@ new contract ABI in any case, so we are staging here.
 |------|------------------------|---------|
 | `aggregator.go.proposed` | `aggregator/aggregator.go` (replace) | New median-consensus aggregator targeting the `pricePair / priceDecimals / ethUsdPrice` ABI |
 | `avs_writer.go.proposed` | `core/chainio/avs_writer.go` (replace) | Renames `SendNewTaskNumberToSquare` → `SendNewPriceTask`, drops the `numToSquare` arg, updates `RaiseChallenge` signature |
+| `challenger.go.proposed` | `challenger/challenger.go` (replace) | M4 helper patch: compares submitted `EthUsdPrice` to a reference ETH/USD price and calls the new `RaiseChallenge(..., referenceEthUsdPrice, ...)` |
 | `median.go` | `aggregator/median.go` (new) | Pure `Median / Variance / DetectOutliers` (already unit-tested in `experiments/m3_aggregator/median_test.go`) |
 | `median_test.go` | `aggregator/median_test.go` (new) | Same 10 unit tests + 2 benchmarks |
 | `INTEGRATION_NOTES.md` | (read-only context) | Findings from the 5/1 audit + open team decisions |
@@ -37,6 +38,11 @@ Current blockers, listed by who owns them:
    relaxing on-chain verification. The proposed aggregator is written
    for the cleanest interpretation (single-round, aggregator-trusted
    median submission with BLS as a liveness attestation) but flagged.
+
+The included challenger patch is intentionally simple: by default it
+uses Coinbase as the independent reference, and it also supports
+`CHALLENGER_REFERENCE_ETH_USD_PRICE=3152.47` for deterministic local
+tests without network access.
 
 Once those resolve, `bash apply_patch.sh` copies these files into the
 right places and the team can `go build ./... && go test ./aggregator/...`.

@@ -52,6 +52,7 @@ operator is slashed `WADS_TO_SLASH` (10%).
 | `challenger/challenger.go` | Untouched (still reads `NumberSquared`) | M4 hasn't shipped |
 | `aggregator_test.go`, `challenger_test.go`, `rpc_server_test.go` | Untouched, will fail post-binding-regen | M4 fix later |
 | `core/chainio/mocks/avs_writer.go` | Untouched generated mock — still exposes `SendNewTaskNumberToSquare` and old `RaiseChallenge` args | Unit tests need mock regeneration after M3 changes |
+| `challenger/challenger.go` | Untouched in the 5/2 zip | M4 patch provided as `challenger.go.proposed` |
 
 **Net as of 5/2 zip**: M1 + M2 have moved Solidity, bindings, digest
 hashing, and operator price fetching forward. M3 can now patch
@@ -201,4 +202,5 @@ code changes, and gives §V more material rather than less.
 | 4 | Decide Path A / B / C | All four | BLS + median correctness |
 | 5 | Add multi-CEX source selection (`OPERATOR_PRICE_SOURCE`) | M2 | Paper's heterogeneous-source claim |
 | 6 | If Path A: add aggregator round-2 RPC | Jon + M2 | Correct BLS median demo |
-| 7 | Update §V tex with 1%/5% framing decision | Jon | Paper |
+| 7 | Wire challenger reference price source / env override | M4 | Challenge demo |
+| 8 | Update §V tex with 1%/5% framing decision | Jon | Paper |
