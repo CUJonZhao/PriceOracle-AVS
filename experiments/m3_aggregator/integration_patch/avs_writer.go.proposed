@@ -22,13 +22,11 @@ import (
 )
 
 // AvsWriterer wraps the on-chain TaskManager. M3 changes:
-//   - SendNewTaskNumberToSquare → SendNewPriceTask (drops numToSquare)
+//   - Task creation is now SendNewPriceTask with no price payload arg.
 //   - RaiseChallenge gains a referenceEthUsdPrice argument matching
 //     the new IIncredibleSquaringTaskManager.raiseAndResolveChallenge.
-//   - SendAggregatedResponse signature is unchanged (the binding type
-//     IIncredibleSquaringTaskManagerTaskResponse now contains
-//     EthUsdPrice instead of NumberSquared, but the wrapper is the
-//     same).
+//   - SendAggregatedResponse signature is unchanged; the binding type
+//     now carries EthUsdPrice, but the wrapper is the same.
 type AvsWriterer interface {
 	SendNewPriceTask(
 		ctx context.Context,

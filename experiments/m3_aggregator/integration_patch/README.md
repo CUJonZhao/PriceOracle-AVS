@@ -17,7 +17,7 @@ squaring interface.
 | `aggregator_test.go.proposed` | `aggregator/aggregator_test.go` (replace) | Updates aggregator unit tests from square tasks to ETH/USD price tasks |
 | `rpc_server_test.go.proposed` | `aggregator/rpc_server_test.go` (replace) | Updates signed response tests to use `EthUsdPrice` and asserts quote stashing |
 | `aggregator_chain_mock.go.proposed` | `aggregator/mocks/chain.go` (replace) | Updates aggregator helper mocks to emit ETH/USD price tasks |
-| `avs_writer.go.proposed` | `core/chainio/avs_writer.go` (replace) | Renames `SendNewTaskNumberToSquare` to `SendNewPriceTask`, drops the `numToSquare` arg, updates `RaiseChallenge` signature |
+| `avs_writer.go.proposed` | `core/chainio/avs_writer.go` (replace) | Uses `SendNewPriceTask`, drops the task payload arg, updates `RaiseChallenge` signature |
 | `avs_writer_mock.go.proposed` | `core/chainio/mocks/avs_writer.go` (replace until mockgen is rerun) | Updates the generated mock to the new writer interface |
 | `challenger.go.proposed` | `challenger/challenger.go` (replace) | M4 helper patch: compares submitted `EthUsdPrice` to a reference ETH/USD price and calls the new `RaiseChallenge(..., referenceEthUsdPrice, ...)` |
 | `challenger_test.go.proposed` | `challenger/challenger_test.go` (replace) | Updates challenger tests for `EthUsdPrice` and the new reference-price challenge arg |
