@@ -50,9 +50,16 @@ tests without network access.
 bash apply_patch.sh /path/to/Decentralized_ETH_USD_oracle_AVS
 ```
 
+On Windows PowerShell:
+
+```powershell
+.\apply_patch.ps1 E:\path\to\Decentralized_ETH_USD_oracle_AVS
+```
+
 Then inside the upstream repo:
 
 ```bash
+gofmt -w aggregator core/chainio challenger
 go build ./...
 go test ./aggregator/... ./challenger/...
 ```

@@ -89,6 +89,12 @@ Apply with:
 bash apply_patch.sh /path/to/Decentralized_ETH_USD_oracle_AVS
 ```
 
+Or on Windows PowerShell:
+
+```powershell
+.\apply_patch.ps1 E:\path\to\Decentralized_ETH_USD_oracle_AVS
+```
+
 Then run in the upstream repo:
 
 ```bash

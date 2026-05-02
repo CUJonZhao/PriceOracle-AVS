@@ -208,11 +208,21 @@ func (c *Challenger) getNonSigningOperatorPubKeys(
 			"txHash", txHash,
 			"err", err,
 		)
+		return nil
+	}
+	if tx == nil {
+		c.logger.Error("Transaction lookup returned nil", "txHash", txHash)
+		return nil
 	}
 	calldata := tx.Data()
+	if len(calldata) < 4 {
+		c.logger.Error("Transaction calldata too short", "txHash", txHash, "calldataLen", len(calldata))
+		return nil
+	}
 	cstmAbi, err := abi.JSON(bytes.NewReader(common.IncredibleSquaringTaskManagerAbi))
 	if err != nil {
 		c.logger.Error("Error getting Abi", "err", err)
+		return nil
 	}
 	methodSig := calldata[:4]
 	method, err := cstmAbi.MethodById(methodSig)
