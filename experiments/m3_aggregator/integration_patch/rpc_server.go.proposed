@@ -1,0 +1,84 @@
+package aggregator
+
+import (
+	"context"
+	"errors"
+	"math/big"
+	"net/http"
+	"net/rpc"
+
+	cstaskmanager "github.com/Layr-Labs/incredible-squaring-avs/contracts/bindings/IncredibleSquaringTaskManager"
+
+	"github.com/Layr-Labs/eigensdk-go/crypto/bls"
+	blsagg "github.com/Layr-Labs/eigensdk-go/services/bls_aggregation"
+	sdktypes "github.com/Layr-Labs/eigensdk-go/types"
+)
+
+var (
+	TaskNotFoundError400                     = errors.New("400. Task not found")
+	OperatorNotPartOfTaskQuorum400           = errors.New("400. Operator not part of quorum")
+	TaskResponseDigestNotFoundError500       = errors.New("500. Failed to get task response digest")
+	UnknownErrorWhileVerifyingSignature400   = errors.New("400. Failed to verify signature")
+	SignatureVerificationFailed400           = errors.New("400. Signature verification failed")
+	CallToGetCheckSignaturesIndicesFailed500 = errors.New("500. Failed to get check signatures indices")
+)
+
+func (agg *Aggregator) startServer(ctx context.Context) error {
+
+	err := rpc.Register(agg)
+	if err != nil {
+		agg.logger.Fatal("Format of service TaskManager isn't correct. ", "err", err)
+	}
+	rpc.HandleHTTP()
+	err = http.ListenAndServe(agg.serverIpPortAddr, nil)
+	if err != nil {
+		agg.logger.Fatal("ListenAndServe", "err", err)
+	}
+
+	return nil
+}
+
+type SignedTaskResponse struct {
+	TaskResponse cstaskmanager.IIncredibleSquaringTaskManagerTaskResponse
+	BlsSignature bls.Signature
+	OperatorId   sdktypes.OperatorId
+}
+
+// ProcessSignedTaskResponse is the JSON-RPC handler operators call to
+// submit their (BLS-signed) ETH/USD price quote.
+//
+// M3 modification: in addition to forwarding the signature to the BLS
+// aggregation service (the upstream behavior), we *also* stash the
+// per-operator EthUsdPrice in agg.priceQuotes[taskIndex][operatorId].
+// That map is then drained by sendAggregatedResponseToContract to
+// compute the consensus median.
+func (agg *Aggregator) ProcessSignedTaskResponse(signedTaskResponse *SignedTaskResponse, reply *bool) error {
+	agg.logger.Infof("Received signed task response: %#v", signedTaskResponse)
+	taskIndex := signedTaskResponse.TaskResponse.ReferenceTaskIndex
+
+	// Stash the operator's individually reported price BEFORE forwarding
+	// the signature for BLS aggregation, so we can compute median +
+	// variance + outliers later in sendAggregatedResponseToContract.
+	agg.tasksMu.Lock()
+	if _, ok := agg.priceQuotes[taskIndex]; !ok {
+		agg.priceQuotes[taskIndex] = make(map[sdktypes.OperatorId]*big.Int)
+	}
+	if signedTaskResponse.TaskResponse.EthUsdPrice != nil {
+		agg.priceQuotes[taskIndex][signedTaskResponse.OperatorId] =
+			new(big.Int).Set(signedTaskResponse.TaskResponse.EthUsdPrice)
+	}
+	agg.tasksMu.Unlock()
+
+	taskSignature := blsagg.NewTaskSignature(
+		taskIndex,
+		signedTaskResponse.TaskResponse,
+		&signedTaskResponse.BlsSignature,
+		signedTaskResponse.OperatorId,
+	)
+
+	err := agg.blsAggregationService.ProcessNewSignature(context.Background(), taskSignature)
+	if reply != nil {
+		*reply = (err == nil)
+	}
+	return err
+}

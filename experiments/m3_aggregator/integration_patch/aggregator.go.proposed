@@ -1,0 +1,396 @@
+package aggregator
+
+import (
+	"context"
+	"math/big"
+	"sync"
+	"time"
+
+	"github.com/Layr-Labs/eigensdk-go/logging"
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"golang.org/x/crypto/sha3"
+
+	"github.com/Layr-Labs/eigensdk-go/chainio/clients"
+	sdkclients "github.com/Layr-Labs/eigensdk-go/chainio/clients"
+	"github.com/Layr-Labs/eigensdk-go/services/avsregistry"
+	blsagg "github.com/Layr-Labs/eigensdk-go/services/bls_aggregation"
+	"github.com/Layr-Labs/eigensdk-go/services/operatorsinfo"
+	oprsinfoserv "github.com/Layr-Labs/eigensdk-go/services/operatorsinfo"
+	sdktypes "github.com/Layr-Labs/eigensdk-go/types"
+	"github.com/Layr-Labs/incredible-squaring-avs/aggregator/types"
+	"github.com/Layr-Labs/incredible-squaring-avs/core"
+	"github.com/Layr-Labs/incredible-squaring-avs/core/chainio"
+	"github.com/Layr-Labs/incredible-squaring-avs/core/config"
+
+	cstaskmanager "github.com/Layr-Labs/incredible-squaring-avs/contracts/bindings/IncredibleSquaringTaskManager"
+)
+
+// =====================================================================
+//  PriceOracle-AVS aggregator (M3)
+//
+//  Differences from the upstream squaring template:
+//
+//  (a) sendNewTask -> sendNewPriceTask: no longer takes a number; just
+//      kicks off a new ETH/USD quote round at the configured cadence.
+//
+//  (b) ProcessSignedTaskResponse stashes the operator's individually
+//      reported EthUsdPrice in priceQuotes[taskIndex][operatorId]
+//      *before* forwarding the BLS signature on for aggregation.
+//      The stashed quotes are what we feed into Median / Variance /
+//      DetectOutliers when it's time to submit the aggregated response.
+//
+//  (c) sendAggregatedResponseToContract computes the consensus median
+//      from priceQuotes, logs variance + outlier indices, and submits
+//      the median when the BLS quorum has actually signed that median.
+//      If the BLS quorum signed a different individual quote, we submit
+//      the BLS-signed quote instead and log the protocol mismatch; this
+//      avoids sending an on-chain response that cannot verify.
+//
+//  (d) hashFunction encodes (referenceTaskIndex uint32, ethUsdPrice
+//      uint256) instead of (referenceTaskIndex uint32, numberSquared
+//      uint256) so the digest matches the new ABI.
+//
+//  IMPORTANT — protocol caveat:
+//  In the current single-round flow, each operator BLS-signs over its
+//  own (taskIndex, p_i) quote, but the aggregator submits the median
+//  to the contract. The contract verifies signatures against
+//  keccak(abi.encode(taskResponse)), so on-chain verification will
+//  fail unless EITHER (i) operators all agree to sign the same
+//  canonical attestation (Path B in INTEGRATION_NOTES.md §3), OR
+//  (ii) we add a second round in which operators sign the median
+//  produced by this aggregator (Path A).
+//
+//  This file is correct for the safe demo path: it always computes the
+//  median, but it only submits the median when the quorum signature is
+//  actually over that median. Path A (two-round signing) makes that
+//  true by construction; Path B/C may only make it true accidentally.
+// =====================================================================
+
+const (
+	// number of blocks after which a task is considered expired
+	taskChallengeWindowBlock = 100
+	blockTimeSeconds         = 12 * time.Second
+	avsName                  = "incredible-squaring"
+
+	// taskCadence is how often the aggregator emits a new price task.
+	// Reduced from upstream (10 s) to 5 s per the M3 design in §V.
+	taskCadence = 5 * time.Second
+
+	// defaultOutlierTolerancePct is the off-chain percentage band used
+	// by DetectOutliers as a per-operator pre-filter / reputation
+	// signal. Note this is intentionally a separate knob from the
+	// on-chain priceDeviationToleranceBps used by the challenger flow
+	// (currently 100 bps = 1% on-chain). See §V.D.
+	defaultOutlierTolerancePct uint64 = 5
+)
+
+// Aggregator sends ETH/USD price tasks on chain, listens for operator-
+// signed responses, computes a robust median over the collected
+// quotes, and submits the median plus the BLS aggregated signature to
+// the on-chain TaskManager.
+type Aggregator struct {
+	logger           logging.Logger
+	serverIpPortAddr string
+	avsWriter        chainio.AvsWriterer
+	// aggregation related fields
+	blsAggregationService blsagg.BlsAggregationService
+	tasks                 map[types.TaskIndex]cstaskmanager.IIncredibleSquaringTaskManagerTask
+	tasksMu               sync.RWMutex
+
+	// priceQuotes holds, per task, the per-operator ETH/USD price each
+	// operator reported. Populated by ProcessSignedTaskResponse,
+	// consumed by sendAggregatedResponseToContract via Median /
+	// Variance / DetectOutliers.
+	priceQuotes map[types.TaskIndex]map[sdktypes.OperatorId]*big.Int
+
+	// tolerancePct is the off-chain DetectOutliers band (in percent).
+	// Defaults to defaultOutlierTolerancePct.
+	tolerancePct uint64
+}
+
+// NewAggregator creates a new Aggregator with the provided config.
+func NewAggregator(c *config.Config) (*Aggregator, error) {
+
+	avsReader, err := chainio.BuildAvsReaderFromConfig(c)
+	if err != nil {
+		c.Logger.Error("Cannot create avsReader", "err", err)
+		return nil, err
+	}
+
+	avsWriter, err := chainio.BuildAvsWriterFromConfig(c)
+	if err != nil {
+		c.Logger.Errorf("Cannot create avsWriter", "err", err)
+		return nil, err
+	}
+
+	chainioConfig := sdkclients.BuildAllConfig{
+		EthHttpUrl:                 c.EthHttpRpcUrl,
+		EthWsUrl:                   c.EthWsRpcUrl,
+		RegistryCoordinatorAddr:    c.IncredibleSquaringRegistryCoordinatorAddr.String(),
+		OperatorStateRetrieverAddr: c.OperatorStateRetrieverAddr.String(),
+		AvsName:                    avsName,
+		PromMetricsIpPortAddress:   ":9090",
+
+		DontUseAllocationManager: true,
+	}
+
+	clients, err := clients.BuildAll(chainioConfig, c.EcdsaPrivateKey, c.Logger)
+	if err != nil {
+		c.Logger.Errorf("Cannot create sdk clients", "err", err)
+		return nil, err
+	}
+
+	operatorPubkeysService := oprsinfoserv.NewOperatorsInfoServiceInMemory(
+		context.Background(),
+		clients.AvsRegistryChainSubscriber,
+		clients.AvsRegistryChainReader,
+		nil,
+		operatorsinfo.Opts{},
+		c.Logger,
+	)
+
+	// hashFunction must match the message that operators BLS-sign in
+	// operator.SignTaskResponse(). The field ordering here mirrors
+	// cstaskmanager.IIncredibleSquaringTaskManagerTaskResponse, which
+	// after M1's binding regen is {referenceTaskIndex, ethUsdPrice}.
+	hashFunction := func(taskResponse sdktypes.TaskResponse) (sdktypes.TaskResponseDigest, error) {
+		taskResponseType, err := abi.NewType("tuple", "", []abi.ArgumentMarshaling{
+			{
+				Name: "referenceTaskIndex",
+				Type: "uint32",
+			},
+			{
+				Name: "ethUsdPrice",
+				Type: "uint256",
+			},
+		})
+		if err != nil {
+			c.Logger.Error("Error creating taskResponseType")
+			return sdktypes.TaskResponseDigest{}, err
+		}
+		arguments := abi.Arguments{
+			{
+				Type: taskResponseType,
+			},
+		}
+
+		encodeTaskResponseByte, err := arguments.Pack(taskResponse)
+		if err != nil {
+			c.Logger.Error("Error Packing taskResponse", err)
+			return sdktypes.TaskResponseDigest{}, err
+		}
+
+		var taskResponseDigest [32]byte
+		hasher := sha3.NewLegacyKeccak256()
+		hasher.Write(encodeTaskResponseByte)
+		copy(taskResponseDigest[:], hasher.Sum(nil)[:32])
+
+		return taskResponseDigest, nil
+	}
+
+	avsRegistryService := avsregistry.NewAvsRegistryServiceChainCaller(avsReader, operatorPubkeysService, c.Logger)
+	blsAggregationService := blsagg.NewBlsAggregatorService(avsRegistryService, hashFunction, c.Logger)
+
+	return &Aggregator{
+		logger:                c.Logger,
+		serverIpPortAddr:      c.AggregatorServerIpPortAddr,
+		avsWriter:             avsWriter,
+		blsAggregationService: blsAggregationService,
+		tasks:                 make(map[types.TaskIndex]cstaskmanager.IIncredibleSquaringTaskManagerTask),
+		priceQuotes:           make(map[types.TaskIndex]map[sdktypes.OperatorId]*big.Int),
+		tolerancePct:          defaultOutlierTolerancePct,
+	}, nil
+}
+
+func (agg *Aggregator) Start(ctx context.Context) error {
+	agg.logger.Info("Starting PriceOracle aggregator.")
+	agg.logger.Info("Starting aggregator rpc server.")
+	go agg.startServer(ctx)
+
+	ticker := time.NewTicker(taskCadence)
+	agg.logger.Info("Aggregator set to send a new ETH/USD price task every", "cadence", taskCadence.String())
+	defer ticker.Stop()
+
+	// ticker doesn't tick immediately, so we send the first task here.
+	_ = agg.sendNewPriceTask()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case blsAggServiceResp := <-agg.blsAggregationService.GetResponseChannel():
+			agg.logger.Info("Received response from blsAggregationService", "blsAggServiceResp", blsAggServiceResp)
+			agg.sendAggregatedResponseToContract(blsAggServiceResp)
+		case <-ticker.C:
+			if err := agg.sendNewPriceTask(); err != nil {
+				// log only; sendNewPriceTask already logged the error
+				continue
+			}
+		}
+	}
+}
+
+// sendAggregatedResponseToContract computes the consensus median over
+// the quotes stashed in priceQuotes[taskIndex] and submits it on
+// chain, together with the BLS aggregated signature returned by the
+// SDK's BlsAggregationService.
+func (agg *Aggregator) sendAggregatedResponseToContract(blsAggServiceResp blsagg.BlsAggregationServiceResponse) {
+	if blsAggServiceResp.Err != nil {
+		agg.logger.Error("BlsAggregationServiceResponse contains an error", "err", blsAggServiceResp.Err)
+		// panicing to help with debugging (fail fast); production code
+		// would surface this as a metric and continue.
+		panic(blsAggServiceResp.Err)
+	}
+
+	taskIdx := blsAggServiceResp.TaskIndex
+
+	// 1) Pull the per-operator quotes we stashed in ProcessSignedTaskResponse.
+	agg.tasksMu.RLock()
+	quotesMap := agg.priceQuotes[taskIdx]
+	agg.tasksMu.RUnlock()
+
+	quotes := make([]*big.Int, 0, len(quotesMap))
+	operatorIds := make([]sdktypes.OperatorId, 0, len(quotesMap))
+	for opId, p := range quotesMap {
+		quotes = append(quotes, p)
+		operatorIds = append(operatorIds, opId)
+	}
+
+	// 2) Compute consensus.  See aggregator/median.go.
+	medianPrice := Median(quotes)
+	variance := Variance(quotes, medianPrice)
+	outlierIdxs := DetectOutliers(quotes, medianPrice, agg.tolerancePct)
+
+	agg.logger.Info("aggregated ETH/USD price",
+		"taskIndex", taskIdx,
+		"medianPrice", medianPrice.String(),
+		"variance", variance.String(),
+		"nQuotes", len(quotes),
+		"nOutliers", len(outlierIdxs),
+		"tolerancePct", agg.tolerancePct,
+	)
+
+	// 3) Build the BLS NonSignerStakesAndSignature blob.
+	nonSignerPubkeys := []cstaskmanager.BN254G1Point{}
+	for _, nonSignerPubkey := range blsAggServiceResp.NonSignersPubkeysG1 {
+		nonSignerPubkeys = append(nonSignerPubkeys, core.ConvertToBN254G1Point(nonSignerPubkey))
+	}
+	quorumApks := []cstaskmanager.BN254G1Point{}
+	for _, quorumApk := range blsAggServiceResp.QuorumApksG1 {
+		quorumApks = append(quorumApks, core.ConvertToBN254G1Point(quorumApk))
+	}
+	nonSignerStakesAndSignature := cstaskmanager.IBLSSignatureCheckerTypesNonSignerStakesAndSignature{
+		NonSignerPubkeys:             nonSignerPubkeys,
+		QuorumApks:                   quorumApks,
+		ApkG2:                        core.ConvertToBN254G2Point(blsAggServiceResp.SignersApkG2),
+		Sigma:                        core.ConvertToBN254G1Point(blsAggServiceResp.SignersAggSigG1.G1Point),
+		NonSignerQuorumBitmapIndices: blsAggServiceResp.NonSignerQuorumBitmapIndices,
+		QuorumApkIndices:             blsAggServiceResp.QuorumApkIndices,
+		TotalStakeIndices:            blsAggServiceResp.TotalStakeIndices,
+		NonSignerStakeIndices:        blsAggServiceResp.NonSignerStakeIndices,
+	}
+
+	agg.logger.Info("Threshold reached. Sending aggregated price response on chain.",
+		"taskIndex", taskIdx,
+	)
+
+	// 4) Build the on-chain TaskResponse. Important: the on-chain
+	//    BLSSignatureChecker verifies the signature against exactly the
+	//    taskResponse we submit here. If the SDK produced a quorum for a
+	//    different individual price than our computed median, submitting
+	//    the median would fail signature verification. In that case we
+	//    submit the BLS-signed response and keep the median as diagnostic
+	//    evidence until the team implements Path A (two-round median
+	//    signing).
+	agg.tasksMu.RLock()
+	task := agg.tasks[taskIdx]
+	agg.tasksMu.RUnlock()
+
+	signedTaskResponse, ok := blsAggServiceResp.TaskResponse.(cstaskmanager.IIncredibleSquaringTaskManagerTaskResponse)
+	if !ok || signedTaskResponse.EthUsdPrice == nil {
+		agg.logger.Error("unexpected BLS task response type; cannot submit on chain",
+			"taskIndex", taskIdx,
+			"taskResponse", blsAggServiceResp.TaskResponse,
+		)
+		return
+	}
+
+	responsePrice := medianPrice
+	if signedTaskResponse.EthUsdPrice.Cmp(medianPrice) != 0 {
+		agg.logger.Warn("BLS quorum signed a price different from computed median; submitting signed price to preserve on-chain verification",
+			"taskIndex", taskIdx,
+			"signedPrice", signedTaskResponse.EthUsdPrice.String(),
+			"medianPrice", medianPrice.String(),
+		)
+		responsePrice = new(big.Int).Set(signedTaskResponse.EthUsdPrice)
+	}
+
+	taskResponse := cstaskmanager.IIncredibleSquaringTaskManagerTaskResponse{
+		ReferenceTaskIndex: taskIdx,
+		EthUsdPrice:        responsePrice,
+	}
+
+	_, err := agg.avsWriter.SendAggregatedResponse(
+		context.Background(),
+		task,
+		taskResponse,
+		nonSignerStakesAndSignature,
+	)
+	if err != nil {
+		agg.logger.Error("Aggregator failed to respond to task", "err", err)
+		return
+	}
+
+	// 5) Free the per-task quote map so we don't leak memory.
+	agg.tasksMu.Lock()
+	delete(agg.priceQuotes, taskIdx)
+	agg.tasksMu.Unlock()
+
+	// 6) NOTE: the contract slashes collectively on the aggregated
+	//    response (see IncredibleSquaringTaskManager.raiseAndResolveChallenge).
+	//    There is currently no per-operator on-chain slash hook, so
+	//    outlierIdxs is logged for off-chain reputation only. If/when
+	//    M1 adds a per-operator slash function, push outliers there.
+	_ = outlierIdxs
+}
+
+// sendNewPriceTask sends a new ETH/USD price-quote task to the on-chain
+// TaskManager and registers the new task with the BLS aggregation
+// service so it knows when quorum is reached.
+func (agg *Aggregator) sendNewPriceTask() error {
+	agg.logger.Info("Aggregator sending new ETH/USD price task")
+
+	newTask, taskIndex, err := agg.avsWriter.SendNewPriceTask(
+		context.Background(),
+		types.QUORUM_THRESHOLD_NUMERATOR,
+		types.QUORUM_NUMBERS,
+	)
+	if err != nil {
+		agg.logger.Error("Aggregator failed to send new price task", "err", err)
+		return err
+	}
+
+	agg.tasksMu.Lock()
+	agg.tasks[taskIndex] = newTask
+	agg.priceQuotes[taskIndex] = make(map[sdktypes.OperatorId]*big.Int)
+	agg.tasksMu.Unlock()
+
+	quorumThresholdPercentages := make(sdktypes.QuorumThresholdPercentages, len(newTask.QuorumNumbers))
+	for i := range newTask.QuorumNumbers {
+		quorumThresholdPercentages[i] = sdktypes.QuorumThresholdPercentage(newTask.QuorumThresholdPercentage)
+	}
+	taskTimeToExpiry := taskChallengeWindowBlock * blockTimeSeconds
+	var quorumNums sdktypes.QuorumNums
+	for _, quorumNum := range newTask.QuorumNumbers {
+		quorumNums = append(quorumNums, sdktypes.QuorumNum(quorumNum))
+	}
+	metadata := blsagg.NewTaskMetadata(
+		taskIndex,
+		newTask.TaskCreatedBlock,
+		quorumNums,
+		quorumThresholdPercentages,
+		taskTimeToExpiry,
+	)
+	agg.blsAggregationService.InitializeNewTask(metadata)
+	return nil
+}

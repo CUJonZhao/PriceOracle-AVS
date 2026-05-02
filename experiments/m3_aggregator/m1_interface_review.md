@@ -3,7 +3,26 @@
 Reviewed repo:
 `https://github.com/CHCYLI/Decentralized_ETH_USD_oracle_AVS`
 
-Date: 2026-04-30
+Dates: 2026-04-30 (initial), 2026-05-01 (re-audited at commit
+`6824d94 First version, need testing`), 2026-05-02 (reviewed M1/M2
+zip branch)
+
+> **2026-05-01 update:** the 4/30 commit is *still* the only delta on
+> top of the upstream template. Solidity has indeed been changed (see
+> below), but the Go layer (operator / aggregator / challenger /
+> avs_writer / contracts/bindings) is untouched, so nothing yet
+> compiles end-to-end. A drop-in M3 patch staged for whenever bindings
+> regenerate is in `integration_patch/`. See
+> `integration_patch/INTEGRATION_NOTES.md` for the full
+> what-changed / what-didn't / open-decisions write-up.
+
+> **2026-05-02 update:** the M1/M2 zip now includes regenerated
+> contract bindings and a real M2 operator path. `operator/operator.go`
+> fetches Coinbase ETH/USD, scales to 8 decimals, and fills
+> `EthUsdPrice`; `core/utils.go` hashes `(referenceTaskIndex,
+> ethUsdPrice)`. Remaining blockers for M3 are `avs_writer.go`,
+> `aggregator.go`, generated mocks/tests, and the BLS-vs-median
+> protocol decision.
 
 ## What M1 Has Already Changed
 
