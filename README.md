@@ -41,3 +41,16 @@ If Go is not installed, use the Python mirror:
 ```bash
 python verify_median.py
 ```
+
+## Latest Demo Status
+
+Validated on 2026-05-03 with the M1/M2 upstream worktree:
+
+- `go build ./...` passed.
+- `go test ./aggregator/... ./challenger/...` passed.
+- Local Anvil deployment completed through EigenLayer core, AVS,
+  UAM permissions, and quorum creation.
+- Aggregator/operator demo ran end to end: operator fetched Coinbase
+  ETH/USD prices, signed `EthUsdPrice` responses, aggregator received
+  them, performed median/BLS aggregation, and submitted the aggregate
+  price response on chain.

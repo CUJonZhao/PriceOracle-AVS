@@ -112,6 +112,18 @@ go test ./aggregator/... ./challenger/...
 
 Both passed after `gofmt -w aggregator core\chainio challenger`.
 
+Local Anvil demo validation on 2026-05-03:
+
+* Deployed EigenLayer core contracts, the AVS contracts, UAM
+  permissions, and quorum setup successfully.
+* Started the M3 aggregator against the local deployment.
+* Started the M2 operator with the updated ETH/USD oracle config.
+* Operator fetched Coinbase ETH/USD prices, scaled them with
+  `PriceDecimals = 8`, signed `TaskResponse{ReferenceTaskIndex,
+  EthUsdPrice}`, and sent the response to the aggregator.
+* Aggregator received signed responses, ran BLS aggregation, logged the
+  median ETH/USD price, and submitted the aggregate response on chain.
+
 ---
 
 ## 4. BLS Aggregation Decision
@@ -156,8 +168,8 @@ off-chain operator outlier band.
 
 | # | Action | Owner |
 |---|--------|-------|
-| 1 | Apply this patch to the M1/M2 upstream branch | Jon |
-| 2 | Run full project/e2e flow once M1/M2 can start local AVS services | Whole team |
+| 1 | Apply this patch to the M1/M2 upstream branch | Done |
+| 2 | Run full project/e2e flow once M1/M2 can start local AVS services | Done locally on Anvil |
 | 3 | Rerun `mockgen` and compare against the manual proposed mocks before final cleanup | Jon / teammate with Go installed |
 | 4 | Decide Path A vs B for demo and paper | Whole team |
 | 5 | Add multi-source operator selection if paper keeps heterogeneous CEX claim | M2 |
