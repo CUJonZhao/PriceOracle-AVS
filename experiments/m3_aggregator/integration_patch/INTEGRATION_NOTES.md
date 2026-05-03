@@ -103,8 +103,14 @@ go build ./...
 go test ./aggregator/... ./challenger/...
 ```
 
-This Codex workspace does not have `go` or `gofmt` on PATH, so those
-commands must be run by someone with a Go toolchain.
+Verified on 2026-05-03 against the M1/M2 zip worktree:
+
+```text
+go build ./...
+go test ./aggregator/... ./challenger/...
+```
+
+Both passed after `gofmt -w aggregator core\chainio challenger`.
 
 ---
 
@@ -151,8 +157,8 @@ off-chain operator outlier band.
 | # | Action | Owner |
 |---|--------|-------|
 | 1 | Apply this patch to the M1/M2 upstream branch | Jon |
-| 2 | Run `gofmt`, `go build ./...`, and `go test ./aggregator/... ./challenger/...` | Jon / teammate with Go installed |
-| 3 | Rerun `mockgen` and compare against the manual proposed mocks | Jon / teammate with Go installed |
+| 2 | Run full project/e2e flow once M1/M2 can start local AVS services | Whole team |
+| 3 | Rerun `mockgen` and compare against the manual proposed mocks before final cleanup | Jon / teammate with Go installed |
 | 4 | Decide Path A vs B for demo and paper | Whole team |
 | 5 | Add multi-source operator selection if paper keeps heterogeneous CEX claim | M2 |
 | 6 | If Path A is selected, add median-signing round between aggregator and operators | M2 + M3 |

@@ -1,6 +1,6 @@
 # M3 Integration Patch - Staged Against M1 Upstream
 
-Date: 2026-05-01, updated 2026-05-02 after M1/M2 zip review.
+Date: 2026-05-01, updated 2026-05-03 after M1/M2 zip compile check.
 
 This directory holds the M3 changes ready to drop into the upstream
 `Decentralized_ETH_USD_oracle_AVS` repo after M1 regenerates the Go
@@ -64,5 +64,11 @@ go build ./...
 go test ./aggregator/... ./challenger/...
 ```
 
-I could not run those Go commands in this Codex Windows workspace
-because `go` and `gofmt` are not installed here.
+Verified on 2026-05-03 against the M1/M2 zip worktree:
+
+```text
+go build ./...
+go test ./aggregator/... ./challenger/...
+```
+
+Both passed after `gofmt -w aggregator core\chainio challenger`.
